@@ -1,0 +1,1884 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisador de Rotas - Telemetria Avançada</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+
+    <style>
+        :root {
+            --primary: #1e293b;
+            --primary-light: #334155;
+            --accent-success: #10b981;
+            --accent-warning: #f59e0b;
+            --accent-danger: #ef4444;
+            --bg-main: #f8fafc;
+            --border: #e2e8f0;
+            --text: #0f172a;
+            
+            /* Cores das Cercas */
+            --cor-descarga: #2563eb;
+            --cor-cliente: #16a34a;
+            --cor-proibida: #dc2626;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: 'Segoe UI', system-ui, sans-serif; }
+        body { background-color: var(--bg-main); color: var(--text); display: flex; flex-direction: column; height: 100vh; overflow: hidden; }
+        header { background-color: var(--primary); color: white; padding: 12px 20px; display: flex; justify-content: space-between; align-items: center; z-index: 1000; }
+        
+        .main-container { display: flex; flex: 1; overflow: hidden; position: relative; }
+        #sidebar { width: 410px; background: white; border-right: 1px solid var(--border); display: flex; flex-direction: column; overflow-y: auto; z-index: 999; position: relative; }
+        #map-container { flex: 1; height: 100%; position: relative; }
+        #map { width: 100%; height: 100%; }
+
+        .sidebar-content { flex: 1; overflow-y: auto; display: flex; flex-direction: column; }
+
+        .section { padding: 12px 15px; border-bottom: 1px solid var(--border); }
+        .section h2 { font-size: 0.90rem; color: var(--primary-light); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+
+        .drop-zone { border: 2px dashed #cbd5e1; border-radius: 8px; padding: 12px 10px; text-align: center; cursor: pointer; background-color: #f1f5f9; transition: all 0.2s; font-size: 0.85rem; }
+        .drop-zone.dragover { border-color: var(--accent-success); background-color: #ecfdf5; }
+
+        .btn-group { display: flex; gap: 6px; margin-top: 6px; }
+        button, .btn-label { background-color: var(--primary-light); color: white; border: none; padding: 8px 10px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; text-align: center; }
+        button:hover, .btn-label:hover { background-color: var(--primary); }
+        button.btn-accent { background-color: #2563eb; }
+        button.btn-accent:hover { background-color: #1d4ed8; }
+        button.btn-success-geo { background-color: var(--accent-success); }
+        button.btn-success-geo:hover { background-color: #059669; }
+        button.btn-secondary { background-color: #64748b; }
+        button.btn-danger { background-color: var(--accent-danger); }
+        button.btn-danger:hover { background-color: #b91c1c; }
+        button.btn-warning { background-color: var(--accent-warning); color: #000; }
+        button.btn-warning:hover { background-color: #d97706; }
+        button.btn-nav { background-color: #7c3aed; }
+        button.btn-nav:hover { background-color: #6d28d9; }
+
+        .config-row { display: flex; gap: 8px; margin-bottom: 6px; }
+        .config-field { flex: 1; display: flex; flex-direction: column; gap: 4px; font-size: 0.75rem; font-weight: bold; color: var(--primary-light); }
+        .config-field input, .config-field select { padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; }
+
+        .search-box { width: 100%; padding: 6px 10px; border: 1px solid var(--border); border-radius: 6px; font-size: 0.8rem; margin-top: 4px; margin-bottom: 6px; }
+
+        .area-list { list-style: none; max-height: 120px; overflow-y: auto; margin-top: 5px; }
+        .area-item { display: flex; flex-direction: column; padding: 8px; background: #f8fafc; border: 1px solid var(--border); border-radius: 6px; margin-bottom: 4px; font-size: 0.8rem; }
+        .area-row { display: flex; justify-content: space-between; align-items: center; width: 100%; }
+        .area-title { font-weight: bold; cursor: pointer; display: flex; align-items: center; gap: 4px; }
+        .area-actions { display: flex; gap: 4px; margin-top: 4px; justify-content: flex-end; }
+        .area-actions button { width: auto; padding: 3px 6px; font-size: 0.7rem; border-radius: 4px; }
+
+        /* Painel Consolidado de Contadores */
+        .summary-panel { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; padding: 10px 15px; background: #f1f5f9; border-bottom: 1px solid var(--border); }
+        .summary-card { padding: 8px; border-radius: 6px; background: white; text-align: center; font-size: 0.75rem; font-weight: bold; border: 1px solid var(--border); }
+        .summary-card span { display: block; font-size: 1.2rem; margin-top: 2px; }
+
+        /* Abas de Resultados */
+        .tabs-container { display: flex; background: #e2e8f0; }
+        .tab-button { background: #e2e8f0; color: #475569; padding: 8px 4px; font-size: 0.75rem; border: none; border-radius: 0; cursor: pointer; font-weight: bold; flex: 1; border-bottom: 2px solid transparent;}
+        .tab-button:hover { background: #cbd5e1; color: #0f172a; }
+        .tab-button.active { background: white; color: #1e293b; border-bottom: 2px solid #2563eb; }
+
+        .results-container { padding: 10px; overflow-y: auto; background: #fafafa; height: 180px; }
+        .log-item { padding: 8px; border-left: 4px solid #cbd5e1; background: white; margin-bottom: 6px; border-radius: 0 6px 6px 0; font-size: 0.8rem; box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
+        .log-item.descarga { border-left-color: var(--cor-descarga); background: #f0f6ff; }
+        .log-item.cliente { border-left-color: var(--cor-cliente); background: #f0fdf4; }
+        .log-item.proibida { border-left-color: var(--cor-proibida); background: #fff5f5; }
+        .log-item.parada-longa { border-left-color: var(--accent-warning); background: #fffbeb; }
+        
+        #console-debug { background: #1a1a1a; color: #10b981; padding: 8px; font-family: monospace; font-size: 0.7rem; max-height: 65px; overflow-y: auto; border-top: 2px solid #333; }
+        
+        /* Rodapé de Sugestões */
+        .footer-sugestoes { background: #1e293b; border-top: 1px solid var(--border); padding: 8px; text-align: center; }
+        .footer-sugestoes button { background: #475569; color: white; font-size: 0.75rem; border: 1px solid #64748b; padding: 6px; border-radius: 4px; }
+        .footer-sugestoes button:hover { background: #334155; }
+
+        .legenda { display: flex; gap: 10px; font-size: 0.75rem; font-weight: 600; margin-top: 5px; justify-content: center; flex-wrap: wrap;}
+        .legenda-item { display: flex; align-items: center; gap: 4px; }
+        .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid #000; }
+
+        /* Painel de Controle de Desenho */
+        .custom-draw-panel {
+            position: absolute; top: 15px; left: 15px; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.25); z-index: 1010; display: flex; flex-direction: column; gap: 8px; width: 260px;
+        }
+        .draw-row { display: flex; gap: 6px; width: 100%; }
+        .draw-btn {
+            background: #f1f5f9; color: #1e293b; border: 1px solid #cbd5e1; padding: 6px 10px; font-size: 0.75rem; border-radius: 6px; cursor: pointer; flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 4px; font-weight: bold; transition: all 0.2s;
+        }
+        .draw-btn:hover { background: #cbd5e1; }
+        .draw-btn.active { background: #1e293b !important; color: white !important; border-color: #0f172a; }
+        .draw-btn.success-btn { background: #10b981; color: white; border-color: #059669; }
+
+        .layer-toggle-panel { position: absolute; top: 15px; right: 15px; z-index: 1010; display: flex; flex-direction: column; gap: 8px; }
+        .layer-btn {
+            background: #2563eb; color: white; font-weight: bold; border: 2px solid white; box-shadow: 0 4px 10px rgba(0,0,0,0.2); padding: 8px 14px; border-radius: 30px; cursor: pointer; width: auto; font-size: 0.8rem;
+        }
+        .layer-btn:hover { background: #1d4ed8; }
+        .layer-btn.toggle-off { background: #64748b; }
+
+        .edit-marker-handle { background: #ffffff; border: 2px solid #ef4444; border-radius: 50%; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.4); }
+        .arrow-icon { font-size: 12px; color: #2563eb; text-shadow: -1px -1px 0 #fff, 1px -1px 0 #fff, -1px 1px 0 #fff, 1px 1px 0 #fff; text-align: center; line-height: 12px; }
+    </style>
+</head>
+<body> 
+    <style>/* Ativa a exibição da mensagem ao passar o mouse por cima do botão Sobre */
+.dropdown-sobre:hover .conteudo-sobre {
+    display: block !important;
+}
+
+/* Deixa o botão amarelo levemente mais escuro ao passar o mouse */
+.dropdown-sobre button:hover {
+    background-color: #e0a800 !important;
+}</style>
+    <header>
+        
+        <header style="display: flex; justify-content: space-between; align-items: center; padding: 10px 18px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; background-color: #1a2332; padding: 10px 20px; color: white; flex-wrap: wrap;">
+    
+        <div style="flex: 1; min-width: 300px;">
+        <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
+            🗺️ Analisador Logístico de Cercas virtuais
+        </h2>
+        <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
+           
+        </span>
+    </div>
+     </div>
+</div>
+        <!-- ÁREA CENTRALIZADA DO BOTÃO DE ACESSO -->
+        <div style="flex: 1; display: flex; justify-content: center; align-items: center; gap: 10px; margin-right: 90px;">
+            <button id="btn-login-trigger" style="
+                background-color: #2563eb; 
+                color: #ffffff; 
+                border: none; 
+                padding: 8px 20px; 
+                font-weight: bold; 
+                border-radius: 6px; 
+                cursor: pointer; 
+                transition: background 0.2s;
+                font-size: 0.9rem;"
+                onmouseover="this.style.backgroundColor='#1d4ed8'"
+                onmouseout="this.style.backgroundColor='#2563eb'">
+                🔐 ACESSAR / CADASTRAR
+            </button>
+            <span id="user-logged-info" style="font-size: 0.8rem; color: #34d399; font-weight: bold; display: none;"></span>
+        </div>
+      </div>
+        
+    </header>
+        <div id="status-libs" style="font-size: 0.8rem; color: #10b981;">● Monitoramento Multicercas Ativo</div>
+    </header>
+    <!-- MODAL FLUTUANTE DE LOGIN E CADASTRO -->
+    <div id="login-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 30000; justify-content: center; align-items: center;">
+    <div style="background: white; padding: 25px; border-radius: 8px; max-width: 380px; width: 90%; box-shadow: 0 4px 25px rgba(0,0,0,0.3); display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">
+            <h3 id="login-modal-title" style="font-size: 1.1rem; color: #0f172a;">Acessar Sistema</h3>
+            <button onclick="fecharModalLogin()" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #94a3b8;">&times;</button>
+        </div>
+        
+        <div id="auth-form-fields" style="display: flex; flex-direction: column; gap: 12px;">
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+                <label style="font-size: 0.8rem; font-weight: bold; color: #475569;">E-mail</label>
+                <input type="email" id="auth-email" placeholder="seu@email.com" style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.9rem;">
+            </div>
+            
+            <div id="container-senha" style="display: flex; flex-direction: column; gap: 4px;">
+                <div style="display: flex; justify-content: space-between; align-items: center;">
+                    <label style="font-size: 0.8rem; font-weight: bold; color: #475569;">Senha</label>
+                    <a href="#" id="link-esqueci-senha" onclick="mudarModoParaRecuperar(event)" style="font-size: 0.75rem; color: #2563eb; text-decoration: none;">Esqueci minha senha</a>
+                </div>
+                <input type="password" id="auth-password" placeholder="••••••••" style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.9rem;">
+            </div>
+        </div>
+
+        <div id="reset-password-fields" style="display: none; flex-direction: column; gap: 12px;">
+            <p style="font-size: 0.8rem; color: #475569; margin: 0;">Digite sua nova senha abaixo:</p>
+            <div style="display: flex; flex-direction: column; gap: 4px;">
+                <label style="font-size: 0.8rem; font-weight: bold; color: #475569;">Nova Senha</label>
+                <input type="password" id="new-password" placeholder="Mínimo 6 caracteres" style="padding: 8px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.9rem;">
+            </div>
+        </div>
+
+        <button id="btn-auth-primary" onclick="gerenciarAutenticacao()" style="background: #2563eb; color: white; border: none; padding: 10px; border-radius: 5px; font-weight: bold; cursor: pointer; font-size: 0.9rem; margin-top: 5px;">Entrar</button>
+        
+        <div id="auth-switch-container" style="text-align: center; font-size: 0.8rem; margin-top: 5px;">
+            <span id="auth-switch-text">Não tem uma conta?</span> 
+            <a href="#" id="auth-switch-link" style="color: #2563eb; font-weight: bold; text-decoration: none;">Cadastre-se</a>
+        </div>
+    </div>
+</div>
+    
+    <div class="main-container">
+        
+        <div id="sidebar">
+            <div class="sidebar-content">
+                <div class="section">
+                    <h2>1. Carregar Planilha (.XLSX)</h2>
+                    <input type="file" id="xlsx-file-input" accept=".xlsx, .xls" style="margin-bottom: 6px; width: 100%; font-size:0.8rem;">
+                    <div id="drop-zone" class="drop-zone">
+                        <strong>Arraste o arquivo de telemetria aqui</strong>
+                    </div>
+                    <div class="btn-group">
+                        <button class="btn-danger" style="padding: 6px;" onclick="limparPlanilhaTelemetria()">🗑️ Limpar Telemetria</button>
+                        <button id="btn-ultima-posicao" class="btn-accent" style="padding: 6px; background-color: #0284c7;" onclick="focarUltimaPosicao()">📍 Última Posição</button>
+                    </div>
+                    <div id="file-info" style="margin-top: 4px; font-size: 0.75rem; color: var(--accent-success); display: none; font-weight: bold;"></div>
+                    
+                    <div class="legenda">
+                        <div class="legenda-item"><span class="dot" style="background: #eab308;"></span> Parado (0 km/h)</div>
+                        <div class="legenda-item"><span class="dot" style="background: #22c55e;"></span> Movimento</div>
+                    </div>
+                    <div style="font-size: 0.7rem; color: #64748b; margin-top: 6px; text-align: center;">💡 Dica: Clique em qualquer ponto verde/amarelo para criar uma área Cliente de 60m.</div>
+                </div>
+
+                <div class="section" style="background-color: #f8fafc;">
+                    <h2>2. Análise de Cercas Virtual (<span id="count-total-cercas-badge" style="font-weight:bold;">0</span>)</h2>
+                    <div class="config-row">
+                        <div class="config-field">
+                            <label for="input-tempo-descarga">Mín. Descarga (min)</label>
+                            <input type="number" id="input-tempo-descarga" value="45" min="1">
+                        </div>
+                    </div>
+                    <button id="btn-salvar-supabase" class="btn-salvar" style="background: #10b981; color: white; border: none; padding: 10px 15px; margin-top: 10px; border-radius: 5px; cursor: pointer; width: 100%; font-weight: bold; display: none;">
+    💾 SALVAR ALTERAÇÕES NA NUVEM
+</button>
+                    <div class="btn-group" style="flex-direction: column; gap: 4px; margin-top: 18px;">
+                        <button class="btn-accent" style="font-weight: bold; background-color: #2563eb;" onclick="analisarDadosDasCercas()">⚡ Processar Cercas logísticas</button>
+                        
+                        <div style="display: flex; gap: 4px; width: 100%; flex-wrap: wrap;">
+                            <button id="btn-nav-descarga" class="btn-nav" style="display: none; flex: 1; background: var(--cor-descarga);" onclick="navegarColecao('descarga')">Próx. Descarga ➔</button>
+                            <button id="btn-nav-cliente" class="btn-nav" style="display: none; flex: 1; background: var(--cor-cliente);" onclick="navegarColecao('cliente')">Próx. Cliente ➔</button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="section" style="background-color: #fffbfa;">
+                    <h2>3. Paradas Gerais e Restrições Red</h2>
+                    <div class="config-row">
+                        <div class="config-field">
+                            <label for="input-tempo-parada">Tempo Mín. (min)</label>
+                            <input type="number" id="input-tempo-parada" value="60" min="1">
+                        </div>
+                        <div class="config-field">
+                            <label for="input-raio-parada">Raio Máx. (metros)</label>
+                            <input type="number" id="input-raio-parada" value="25" min="5">
+                        </div>
+                    </div>
+                    
+                    <div class="btn-group" style="flex-direction: column; gap: 4px;">
+                        <button class="btn-warning" style="font-weight: bold;" onclick="identificarParadasEProibidas()">🔍 Identificar Paradas e Alertas</button>
+                        <div style="display: flex; gap: 4px; width: 100%;">
+                            <button id="btn-nav-parada-geral" class="btn-nav" style="background: #64748b; display: none;" onclick="navegarColecao('parada')">Próx. Parada ➔</button>
+                            <button id="btn-nav-proibida" class="btn-danger" style="display: none;" onclick="navegarColecao('proibida')">⚠️ Ver Alerta Proibido ➔</button>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="section">
+                    <h2>Perímetros Desenhados (<span id="area-count">0</span>)</h2>
+                    <input type="text" id="input-busca-cerca" class="search-box" placeholder="🔍 Buscar cerca pelo nome..." oninput="atualizarListaLocais()">
+                    <div class="btn-group">
+                        <button onclick="exportarBaseJSON()">📥 Exportar JSON</button>
+                        <label class="btn-label" for="import-file-input">📤 Importar JSON</label>
+                        <input type="file" id="import-file-input" accept=".json" style="display:none" onchange="importarBaseJSON(this)">
+                    </div>
+                    <ul id="lista-areas" class="area-list"></ul>
+                </div>
+
+                <div class="summary-panel">
+                    <div class="summary-card" style="border-top: 3px solid var(--accent-warning);">
+                        ⚠️ PARADAS
+                        <span id="summary-paradas" style="color: var(--accent-warning);">0</span>
+                    </div>
+                    <div class="summary-card" style="border-top: 3px solid var(--cor-descarga);">
+                        🟦 DESCARGAS
+                        <span id="summary-descargas" style="color: var(--cor-descarga);">0</span>
+                    </div>
+                    <div class="summary-card" style="border-top: 3px solid var(--cor-cliente);">
+                        🟩 CLIENTES
+                        <span id="summary-clientes" style="color: var(--cor-cliente);">0</span>
+                    </div>
+                </div>
+
+                <div class="tabs-container">
+                    <button id="tab-btn-descarga" class="tab-button active" onclick="alternarAbaResultados('descarga')">🟦 Descarga (<span id="badge-tab-descarga">0</span>)</button>
+                    <button id="tab-btn-cliente" class="tab-button" onclick="alternarAbaResultados('cliente')">🟩 Cliente (<span id="badge-tab-cliente">0</span>)</button>
+                    <button id="tab-btn-proibida" class="tab-button" onclick="alternarAbaResultados('proibida')">🟥 Proibido (<span id="badge-tab-proibida">0</span>)</button>
+                    <button id="tab-btn-parada" class="tab-button" onclick="alternarAbaResultados('parada')">⚠️ Parada (<span id="badge-tab-parada">0</span>)</button>
+                </div>
+                <div class="results-container">
+                    <div id="log-resultados">
+                        <p style="color: #94a3b8; font-size: 0.8rem; text-align: center; margin-top: 10px;">Aguardando execução de análises.</p>
+                    </div>
+                </div>
+
+                <div id="console-debug">Aguardando inserção de planilha...</div>
+            </div>
+
+            <div class="footer-sugestoes">
+                <button onclick="alert('📧 Contato para suporte e melhorias: pablojulier@gmail.com')">💬 Contato e Sugestão de Melhorias</button>
+            </div>
+        </div>
+
+        <div id="map-container">
+            <div class="custom-draw-panel">
+                <div class="config-field" style="font-size:0.75rem;">
+                    <label>TIPO DE CERCA VIRTUAL:</label>
+                    <select id="select-tipo-cerca-desenho">
+                        <option value="DESCARGA">🟦 Cerca de Descarga (Azul)</option>
+                        <option value="CLIENTE">🟩 Área do Cliente (Verde)</option>
+                        <option value="PROIBIDA">🟥 Área Proibida (Vermelho)</option>
+                    </select>
+                </div>
+                <div class="draw-row">
+                    <button id="btn-mode-rect" class="draw-btn" onclick="mudarModoDesenho('RETANGULO')">Rect (2 Cliques)</button>
+                    <button id="btn-mode-poly" class="draw-btn" onclick="mudarModoDesenho('POLIGONO')">Polígono Livre</button>
+                </div>
+                <button id="btn-poly-done" class="draw-btn success-btn" style="display: none; width:100%;" onclick="finalizarPoligonoManual()">✓ Finalizar Polígono</button>
+            </div>
+
+            <div class="layer-toggle-panel">
+                <button id="btn-toggle-layer" class="layer-btn" onclick="alternarCamadaMapa()">Satélite 🛰️</button>
+                <button id="btn-toggle-polyline" class="layer-btn" onclick="alternarVisibilidadePolyline()">Ocultar Linhas 📐</button>
+            </div>
+
+            <div id="map"></div>
+        </div>
+
+    </div>
+
+    <script>
+        function logDebug(msg, erro = false) {
+            var con = document.getElementById('console-debug');
+            con.style.color = erro ? "#ef4444" : "#10b981";
+            con.innerHTML = (erro ? "❌ ERRO: " : "▶ ") + msg;
+        }
+
+        function formatarDataBr(date) {
+            if (!(date instanceof Date) || isNaN(date.getTime())) return "Data Inválida";
+            var dia = String(date.getDate()).padStart(2, '0');
+            var mes = String(date.getMonth() + 1).padStart(2, '0');
+            var ano = String(date.getFullYear());
+            var horas = String(date.getHours()).padStart(2, '0');
+            var minutos = String(date.getMinutes()).padStart(2, '0');
+            return `${dia}/${mes}/${ano} ${horas}:${minutos}`;
+        }
+
+        function mapDataValida(campo) {
+            if (campo instanceof Date) return campo;
+            if (typeof campo === 'number') {
+                var dataUtc = new Date((campo - 25569) * 86400 * 1000);
+                var diferencaFuso = dataUtc.getTimezoneOffset() * 60000;
+                return new Date(dataUtc.getTime() + diferencaFuso);
+            }
+            if (typeof campo === 'string' && campo.trim() !== "") {
+                var partes = campo.match(/(\d+)/g);
+                if (partes && partes.length >= 5) {
+                    var dia = parseInt(partes[0], 10);
+                    var mes = parseInt(partes[1], 10) - 1;
+                    var ano = parseInt(partes[2], 10);
+                    if (ano < 100) ano += 2000;
+                    var hora = parseInt(partes[3], 10);
+                    var min = parseInt(partes[4], 10);
+                    var seg = partes[5] ? parseInt(partes[5], 10) : 0;
+                    return new Date(ano, mes, dia, hora, min, seg);
+                }
+                var d = new Date(Date.parse(campo));
+                if (!isNaN(d.getTime())) return d;
+            }
+            return new Date(NaN);
+        }
+
+        var map, camadaDesenhos;
+        var camadaPontosPlanilha = L.layerGroup();
+        var camadaLinhasTrajeto = L.layerGroup(); 
+        var camadaEventosDinamicos = L.layerGroup(); 
+        var locaisCadastrados = {};
+        var dadosPlanilhaBrutos = null;
+        var arrayPontosPlotados = []; 
+        
+        var camadaGoogleRuas, camadaGoogleSatelite;
+        var modoSateliteAtivo = false;
+        var visibilidadePolylineAtiva = true;
+        var colunasDetectadas = { lat: null, lon: null, vel: null, time: null, porta: null };
+
+        var modoAtual = "NAO_SELECIONADO"; 
+        var cliquesRetangulo = [];
+        var pontosPoligonoProvisorio = [];
+        var linhaGuiaPoligono = null;
+        var cercaSendoEditadaId = null;
+        var marcadoresDeReajuste = [];
+
+        var relatoriosCalculados = { descarga: [], cliente: [], proibida: [], parada: [] };
+        var indicesNavegacao = { descarga: -1, cliente: -1, proibida: -1, parada: -1 };
+        var abaAtivaResultados = "descarga";
+
+        window.addEventListener('DOMContentLoaded', function() {
+            map = L.map('map', { zoomControl: false }).setView([-15.7801, -47.9292], 4);
+            L.control.zoom({ position: 'bottomright' }).addTo(map);
+
+            camadaGoogleRuas = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { attribution: '© Google Maps', maxZoom: 20 });
+            camadaGoogleSatelite = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { attribution: '© Google Maps Satélite', maxZoom: 20 });
+            camadaGoogleRuas.addTo(map);
+            
+            camadaDesenhos = new L.FeatureGroup().addTo(map);
+            camadaPontosPlanilha.addTo(map);
+            camadaLinhasTrajeto.addTo(map);
+            camadaEventosDinamicos.addTo(map);
+
+            map.on('click', function(e) {
+                var latlng = e.latlng;
+                if (modoAtual === "RETANGULO") {
+                    cliquesRetangulo.push(latlng);
+                    if (cliquesRetangulo.length === 2) {
+                        var bounds = L.latLngBounds(cliquesRetangulo[0], cliquesRetangulo[1]);
+                        var tipoCerca = document.getElementById('select-tipo-cerca-desenho').value;
+                        var cor = obterCorPorTipo(tipoCerca);
+                        var layer = L.rectangle(bounds, {color: cor, weight: 2, fillColor: cor, fillOpacity: 0.35, bubblingMouseEvents: false});
+                        salvarGeometriaDesenhada(layer, 'rectangle', tipoCerca);
+                        cliquesRetangulo = [];
+                    }
+                } 
+                else if (modoAtual === "POLIGONO") {
+                    pontosPoligonoProvisorio.push(latlng);
+                    var tipoCerca = document.getElementById('select-tipo-cerca-desenho').value;
+                    var cor = obterCorPorTipo(tipoCerca);
+                    if (linhaGuiaPoligono) {
+                        linhaGuiaPoligono.setLatLngs(pontosPoligonoProvisorio);
+                    } else {
+                        linhaGuiaPoligono = L.polyline(pontosPoligonoProvisorio, {color: cor, weight: 3, dashArray: '5, 5'}).addTo(map);
+                    }
+                }
+            });
+
+            var dropZone = document.getElementById('drop-zone');
+            var fileInput = document.getElementById('xlsx-file-input');
+            dropZone.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('dragover'); });
+            dropZone.addEventListener('dragleave', () => { dropZone.classList.remove('dragover'); });
+            dropZone.addEventListener('drop', (e) => {
+                e.preventDefault(); dropZone.classList.remove('dragover');
+                if (e.dataTransfer.files.length) carregarExcelBruto(e.dataTransfer.files[0]);
+            });
+            fileInput.addEventListener('change', (e) => {
+                if (e.target.files.length) carregarExcelBruto(e.target.files[0]);
+            });
+        });
+
+        function obterCorPorTipo(tipo) {
+            if (tipo === "CLIENTE") return "var(--cor-cliente)";
+            if (tipo === "PROIBIDA") return "var(--cor-proibida)";
+            return "var(--cor-descarga)";
+        }
+
+        function obterEmojiPorTipo(tipo) {
+            if (tipo === "CLIENTE") return "🟩";
+            if (tipo === "PROIBIDA") return "🟥";
+            return "🟦";
+        }
+
+        function limparPlanilhaTelemetria() {
+            dadosPlanilhaBrutos = null;
+            arrayPontosPlotados = [];
+            limparResultadosLogica();
+            camadaPontosPlanilha.clearLayers();
+            camadaLinhasTrajeto.clearLayers();
+            document.getElementById('xlsx-file-input').value = "";
+            document.getElementById('file-info').style.display = 'none';
+            logDebug("Dados de telemetria removidos.");
+        }
+
+        function limparResultadosLogica() {
+            camadaEventosDinamicos.clearLayers();
+            relatoriosCalculados = { descarga: [], cliente: [], proibida: [], parada: [] };
+            indicesNavegacao = { descarga: -1, cliente: -1, proibida: -1, parada: -1 };
+            
+            document.getElementById('btn-nav-descarga').style.display = "none";
+            document.getElementById('btn-nav-cliente').style.display = "none";
+            document.getElementById('btn-nav-parada-geral').style.display = "none";
+            document.getElementById('btn-nav-proibida').style.display = "none";
+            
+            atualizarBadgesEContadoresTotais();
+            renderizarHistoricoNaAba();
+
+            Object.keys(locaisCadastrados).forEach(id => {
+                var local = locaisCadastrados[id];
+                var emoji = obterEmojiPorTipo(local.tipoCerca);
+                local.layer.bindPopup(`<b>${emoji} ${local.nome}</b>`);
+            });
+        }
+
+        function focarUltimaPosicao() {
+            if (!arrayPontosPlotados || arrayPontosPlotados.length === 0) {
+                alert("Nenhuma telemetria carregada no mapa para identificar a última posição.");
+                return;
+            }
+            var ultimoMarcador = arrayPontosPlotados[arrayPontosPlotados.length - 1];
+            var coordenadas = ultimoMarcador.getLatLng();
+            
+            map.setView(coordenadas, 16);
+            ultimoMarcador.openPopup();
+            logDebug(`Focado na última posição da rota: Lat ${coordenadas.lat.toFixed(5)}, Lon ${coordenadas.lng.toFixed(5)}`);
+        }
+
+        function mudarModoDesenho(novoModo) {
+            cliquesRetangulo = []; pontosPoligonoProvisorio = []; limparMarcadoresReajuste();
+            if (linhaGuiaPoligono) { map.removeLayer(linhaGuiaPoligono); linhaGuiaPoligono = null; }
+            document.getElementById('btn-mode-rect').classList.remove('active');
+            document.getElementById('btn-mode-poly').classList.remove('active');
+            document.getElementById('btn-poly-done').style.display = "none";
+
+            if (modoAtual === novoModo) { modoAtual = "NAO_SELECIONADO"; return; }
+            modoAtual = novoModo;
+
+            if (modoAtual === "RETANGULO") {
+                document.getElementById('btn-mode-rect').classList.add('active');
+            } else if (modoAtual === "POLIGONO") {
+                document.getElementById('btn-mode-poly').classList.add('active');
+                document.getElementById('btn-poly-done').style.display = "block";
+            }
+        }
+
+        function finalizarPoligonoManual() {
+            if (pontosPoligonoProvisorio.length < 3) { alert("O Polígono precisa de no mínimo 3 cliques!"); return; }
+            var tipoCerca = document.getElementById('select-tipo-cerca-desenho').value;
+            var cor = obterCorPorTipo(tipoCerca);
+            var layer = L.polygon(pontosPoligonoProvisorio, {color: cor, weight: 2, fillColor: cor, fillOpacity: 0.35, bubblingMouseEvents: false});
+            salvarGeometriaDesenhada(layer, 'polygon', tipoCerca);
+            if (linhaGuiaPoligono) { map.removeLayer(linhaGuiaPoligono); linhaGuiaPoligono = null; }
+            pontosPoligonoProvisorio = [];
+        }
+
+        function salvarGeometriaDesenhada(layer, tipoGeometria, tipoCerca, nomeCustomizado = null) {
+            var id = L.stamp(layer);
+            var nomeLocal = nomeCustomizado;
+            
+            if (!nomeLocal) {
+                var sufixo = tipoCerca === "CLIENTE" ? "Cliente " : (tipoCerca === "PROIBIDA" ? "Z. Proibida " : "Cerca Descarga ");
+                nomeLocal = prompt("Identificação do Perímetro / Cerca:", sufixo + (Object.keys(locaisCadastrados).length + 1));
+            }
+            
+            if (!nomeLocal) { mudarModoDesenho('NAO_SELECIONADO'); return; }
+
+            var emoji = obterEmojiPorTipo(tipoCerca);
+            layer.bindPopup(`<b>${emoji} ${nomeLocal}</b>`);
+            camadaDesenhos.addLayer(layer);
+
+            layer.on('click', function(e) { L.DomEvent.stopPropagation(e); activarReajusteDePontos(id); });
+
+            var latlngs = layer.getLatLngs();
+            if (Array.isArray(latlngs[0])) { latlngs = latlngs[0]; }
+            var coordenadasOriginais = latlngs.map(ll => [ll.lat, ll.lng]);
+
+            locaisCadastrados[id] = { 
+                nome: nomeLocal, 
+                type: tipoGeometria, 
+                tipoCerca: tipoCerca, 
+                layer: layer, 
+                coordenadasOriginais: JSON.parse(JSON.stringify(coordenadasOriginais)),
+                geo: { coordenadas: JSON.parse(JSON.stringify(coordenadasOriginais)) } 
+            };
+
+            atualizarListaLocais(); 
+            mudarModoDesenho('NAO_SELECIONADO');
+        }
+
+        /* NOVA FUNÇÃO: Geração de polígono aproximando um raio de 60 metros */
+        function gerarCercaRaioPoligono60m(latlngCentroid) {
+            var raioMetros = 60;
+            var numeroLados = 16; // Quantidade de vértices para moldar o polígono redondo
+            var pontosPoligono = [];
+            
+            // Constantes de conversão aproximada para metros terrestres
+            var degressPorMetroLat = 1 / 111132.95;
+            var degressPorMetroLon = 1 / (40075000 * Math.cos(latlngCentroid.lat * Math.PI / 180) / 360);
+
+            for (var i = 0; i < numeroLados; i++) {
+                var anguloRadianos = (i * 360 / numeroLados) * Math.PI / 180;
+                var deslocamentoLat = raioMetros * Math.sin(anguloRadianos) * degressPorMetroLat;
+                var deslocamentoLon = raioMetros * Math.cos(anguloRadianos) * degressPorMetroLon;
+                
+                pontosPoligono.push([
+                    latlngCentroid.lat + deslocamentoLat, 
+                    latlngCentroid.lng + deslocamentoLon
+                ]);
+            }
+
+            var cor = obterCorPorTipo("CLIENTE");
+            var layer = L.polygon(pontosPoligono, {
+                color: cor, 
+                weight: 2, 
+                fillColor: cor, 
+                fillOpacity: 0.35, 
+                bubblingMouseEvents: false
+            });
+
+            var nomeSugerido = "Cliente Gerado " + (Object.keys(locaisCadastrados).length + 1);
+            var nomeConfirmado = prompt("Nome da área verde (Cliente) com raio de 60 metros:", nomeSugerido);
+            
+            if (nomeConfirmado) {
+                salvarGeometriaDesenhada(layer, 'polygon', 'CLIENTE', nomeConfirmado);
+                logDebug("Cerca poligonal de 60m gerada no ponto selecionado.");
+            }
+        }
+
+        function activarReajusteDePontos(id) {
+    limparMarcadoresReajuste();
+    cercaSendoEditadaId = id;
+    var local = locaisCadastrados[id];
+    if (!local) return;
+    
+    var layer = local.layer;
+    var latlngs = layer.getLatLngs();
+    if (Array.isArray(latlngs[0])) {
+        latlngs = latlngs[0];
+    }
+    
+    latlngs.forEach((latlng, index) => {
+        var handleIcon = L.divIcon({ className: 'edit-marker-handle', iconSize: [12, 12] });
+        var marcadorHandle = L.marker([latlng.lat, latlng.lng], { icon: handleIcon, draggable: true }).addTo(map);
+        
+        // Enquanto arrasta, atualiza visualmente o polígono no mapa
+        marcadorHandle.on('drag', function(e) {
+            var novoPos = e.target.getLatLng();
+            var limitesAtuais = layer.getLatLngs();
+            if (Array.isArray(limitesAtuais[0])) {
+                limitesAtuais[0][index] = novoPos;
+                layer.setLatLngs(limitesAtuais);
+            } else {
+                limitesAtuais[index] = novoPos;
+                layer.setLatLngs(limitesAtuais);
+            }
+        });
+
+        // 🔥 CORREÇÃO AQUI: Quando o usuário solta o ponto editado, grava de verdade nas propriedades de exportação
+        marcadorHandle.on('dragend', function() {
+            var novosPontos = layer.getLatLngs();
+            if (Array.isArray(novosPontos[0])) {
+                novosPontos = novosPontos[0];
+            }
+            
+            // Converte os objetos do Leaflet de volta para arrays puros [lat, lng]
+            var arrayCoordenadasFormatoPuro = novosPontos.map(ll => [ll.lat, ll.lng]);
+            
+            // Sincroniza todas as variáveis de persistência que o seu JSON e banco utilizam
+            local.coordenadasOriginais = JSON.parse(JSON.stringify(arrayCoordenadasFormatoPuro));
+            local.geo = { coordenadas: JSON.parse(JSON.stringify(arrayCoordenadasFormatoPuro)) };
+            
+            logDebug(`Ajuste do perímetro "${local.nome}" salvo na memória. Lembre-se de salvar na nuvem.`);
+        });
+
+        marcadoresDeReajuste.push(marcadorHandle);
+    });
+}
+
+        function limparMarcadoresReajuste() {
+            marcadoresDeReajuste.forEach(m => map.removeLayer(m)); marcadoresDeReajuste = []; cercaSendoEditadaId = null;
+        }
+
+        function focarCercaNoMapa(id) {
+            var local = locaisCadastrados[id]; if (!local) return;
+            map.fitBounds(local.layer.getBounds(), { padding: [50, 50], maxZoom: 16 });
+            local.layer.openPopup(); activarReajusteDePontos(id);
+        }
+
+        function renomearCerca(id) {
+            var local = locaisCadastrados[id]; if (!local) return;
+            var novoNome = prompt(`Alterar nome da cerca para:`, local.nome);
+            if (novoNome && novoNome.trim() !== "") {
+                local.nome = novoNome.trim(); 
+                var emoji = obterEmojiPorTipo(local.tipoCerca);
+                local.layer.bindPopup(`<b>${emoji} ${local.nome}</b>`); 
+                atualizarListaLocais();
+            }
+        }
+
+        function resetarCercaOriginal(id) {
+            var local = locaisCadastrados[id]; if (!local) return;
+            limparMarcadoresReajuste();
+            local.geo.coordenadas = JSON.parse(JSON.stringify(local.coordenadasOriginais));
+            var ptsFormatados = local.geo.coordenadas.map(p => L.latLng(p[0], p[1]));
+            local.layer.setLatLngs(ptsFormatados);
+            ativarReajusteDePontos(id);
+        }
+
+        function deletarCercaIsolada(id) {
+            if (locaisCadastrados[id]) {
+                if (cercaSendoEditadaId === id) limparMarcadoresReajuste();
+                camadaDesenhos.removeLayer(locaisCadastrados[id].layer);
+                delete locaisCadastrados[id]; atualizarListaLocais();
+            }
+        }
+
+        function alternarCamadaMapa() {
+            var btn = document.getElementById('btn-toggle-layer');
+            if (modoSateliteAtivo) {
+                map.removeLayer(camadaGoogleSatelite); camadaGoogleRuas.addTo(map);
+                btn.innerText = "Satélite 🛰️"; btn.style.background = "#2563eb"; modoSateliteAtivo = false;
+            } else {
+                map.removeLayer(camadaGoogleRuas); camadaGoogleSatelite.addTo(map);
+                btn.innerText = "Mapa de Ruas 🗺️"; btn.style.background = "#10b981"; modoSateliteAtivo = true;
+            }
+        }
+
+        function alternarVisibilidadePolyline() {
+            var btn = document.getElementById('btn-toggle-polyline');
+            if (visibilidadePolylineAtiva) {
+                map.removeLayer(camadaLinhasTrajeto);
+                btn.innerText = "Mostrar Linhas 📐"; btn.classList.add('toggle-off'); visibilidadePolylineAtiva = false;
+            } else {
+                map.addLayer(camadaLinhasTrajeto);
+                btn.innerText = "Ocultar Linhas 📐"; btn.classList.remove('toggle-off'); visibilidadePolylineAtiva = true;
+            }
+        }
+
+        function atualizarListaLocais() {
+            var lista = document.getElementById('lista-areas'); lista.innerHTML = '';
+            var filtroBusca = document.getElementById('input-busca-cerca').value.toLowerCase().trim();
+            var chaves = Object.keys(locaisCadastrados); var totalVisivel = 0;
+
+            chaves.forEach(id => {
+                var local = locaisCadastrados[id];
+                var nomeCerca = local.nome;
+                if (filtroBusca !== "" && !nomeCerca.toLowerCase().includes(filtroBusca)) return;
+
+                totalVisivel++;
+                var emoji = obterEmojiPorTipo(local.tipoCerca);
+                var li = document.createElement('li');
+                li.className = 'area-item';
+                li.innerHTML = `
+                    <div class="area-row">
+                        <span class="area-title" onclick="focarCercaNoMapa(${id})">${emoji} <b>${nomeCerca}</b></span>
+                    </div>
+                    <div class="area-actions">
+                        <button class="btn-secondary" style="background:#0284c7;" onclick="renomearCerca(${id})">✏️</button>
+                        <button class="btn-secondary" style="background:#475569;" onclick="resetarCercaOriginal(${id})">↩️</button>
+                        <button class="btn-secondary" style="background:var(--accent-danger);" onclick="deletarCercaIsolada(${id})">❌</button>
+                    </div>
+                `;
+                lista.appendChild(li);
+            });
+            document.getElementById('area-count').innerText = totalVisivel;
+            document.getElementById('count-total-cercas-badge').innerText = chaves.length;
+        }
+
+        function carregarExcelBruto(file) {
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    var data = new Uint8Array(e.target.result);
+                    var workbook = XLSX.read(data, {type: 'array', cellDates: true});
+                    dadosPlanilhaBrutos = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {defval: ""});
+                    if(!dadosPlanilhaBrutos.length) throw new Error("Planilha sem registros lógicos.");
+                    mapearEPlotarAutomatico(Object.keys(dadosPlanilhaBrutos[0]), file.name, dadosPlanilhaBrutos.length);
+                } catch(err) { logDebug("Erro: " + err.message, true); }
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        function mapearEPlotarAutomatico(headers, nome, count) {
+            document.getElementById('file-info').innerText = `📊 ${nome} (${count} pontos)`;
+            document.getElementById('file-info').style.display = 'block';
+            colunasDetectadas.porta = null;
+
+            headers.forEach(h => {
+                let low = h.toLowerCase().trim();
+                if(low.includes('lat')) colunasDetectadas.lat = h;
+                if(low.includes('lon') || low.includes('long')) colunasDetectadas.lon = h;
+                if(low.includes('vel') || low.includes('speed') || low.includes('km')) colunasDetectadas.vel = h;
+                if(low.includes('dat') || low.includes('hor') || low.includes('tim')) colunasDetectadas.time = h;
+                if(low.includes('porta') || low.includes('bau') || low.includes('sensor') || low.includes('status')) colunasDetectadas.porta = h;
+            });
+
+            if(!colunasDetectadas.lat) colunasDetectadas.lat = headers[0];
+            if(!colunasDetectadas.lon) colunasDetectadas.lon = headers[1];
+            if(!colunasDetectadas.vel) colunasDetectadas.vel = headers[2];
+            if(!colunasDetectadas.time) colunasDetectadas.time = headers[3];
+
+            plotarPontosImediato();
+        }
+
+        function calcularAnguloSeta(p1, p2) {
+            var dLon = (p2.lng - p1.lng) * Math.PI / 180;
+            var lat1 = p1.lat * Math.PI / 180;
+            var lat2 = p2.lat * Math.PI / 180;
+            var y = Math.sin(dLon) * Math.cos(lat2);
+            var x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon);
+            return (Math.atan2(y, x) * 180 / Math.PI + 360) % 360;
+        }
+
+        function plotarPontosImediato() {
+            camadaPontosPlanilha.clearLayers();
+            camadaLinhasTrajeto.clearLayers();
+            arrayPontosPlotados = [];
+            limparResultadosLogica();
+            
+            var cLat = colunasDetectadas.lat; var cLon = colunasDetectadas.lon;
+            var cVel = colunasDetectadas.vel; var cTime = colunasDetectadas.time;
+
+            if (!cLat || !cLon) return;
+
+            var pontosOrdenados = [];
+            dadosPlanilhaBrutos.forEach((linha, idx) => {
+                var lat = parseFloat(linha[cLat]); var lon = parseFloat(linha[cLon]);
+                var vel = parseFloat(linha[cVel]); var dataHora = mapDataValida(linha[cTime]);
+
+                if (!isNaN(lat) && !isNaN(lon) && !isNaN(dataHora.getTime())) {
+                    pontosOrdenados.push({ lat: lat, lon: lon, vel: vel, dataHora: dataHora, idOriginal: idx + 1 });
+                }
+            });
+
+            pontosOrdenados.sort((a, b) => a.dataHora - b.dataHora);
+            if (pontosOrdenados.length === 0) { logDebug("Nenhum dado posicional válido.", true); return; }
+
+            var bounds = [];
+            var coordenadasLinhaTrajeto = [];
+
+            pontosOrdenados.forEach((ponto) => {
+                var latlng = [ponto.lat, ponto.lon];
+                bounds.push(latlng); coordenadasLinhaTrajeto.push(latlng);
+
+                var dataFormatada = formatarDataBr(ponto.dataHora);
+                var corBolinha = (ponto.vel === 0 || isNaN(ponto.vel)) ? "#eab308" : "#22c55e"; 
+
+                var circulo = L.circleMarker(latlng, { radius: 6, fillColor: corBolinha, color: "#000", weight: 1, fillOpacity: 0.95 });
+                var htmlPopup = `<b>📍 Ponto #${ponto.idOriginal}</b><br>⏱️ ${dataFormatada}<br>⚡ Velocidade: ${isNaN(ponto.vel)?0:ponto.vel} km/h<br><br><button style='padding:4px 6px; font-size:0.75rem; background:#16a34a;' onclick='gerarCercaRaioPoligono60m(L.latLng(${ponto.lat}, ${ponto.lon}))'>⚡ Criar Cerca 60m Aqui</button>`;
+                circulo.bindPopup(htmlPopup);
+                camadaPontosPlanilha.addLayer(circulo);
+                
+                arrayPontosPlotados.push(circulo);
+            });
+
+            for (var k = 0; k < coordenadasLinhaTrajeto.length - 1; k++) {
+                var pA = L.latLng(coordenadasLinhaTrajeto[k]);
+                var pB = L.latLng(coordenadasLinhaTrajeto[k+1]);
+                var segmentoLinha = L.polyline([pA, pB], { color: '#2563eb', weight: 3, opacity: 0.65 });
+                camadaLinhasTrajeto.addLayer(segmentoLinha);
+
+                var meioLat = (pA.lat + pB.lat) / 2; var meioLng = (pA.lng + pB.lng) / 2;
+                var divIconeSeta = L.divIcon({
+                    className: 'custom-arrow-container',
+                    html: `<div class="arrow-icon" style="transform: rotate(${calcularAnguloSeta(pA, pB) - 90}deg);">▶</div>`,
+                    iconSize: [12, 12], iconAnchor: [6, 6]
+                });
+                camadaLinhasTrajeto.addLayer(L.marker([meioLat, meioLng], { icon: divIconeSeta }));
+            }
+
+            if (bounds.length > 0) { map.fitBounds(bounds); logDebug(`Pontos plotados.`); }
+        }
+
+        function pontoNaCerca(lat, lon, vertices) {
+            var intersecta = false;
+            var i = 0, j = vertices.length - 1;
+            for (i = 0; i < vertices.length; i++) {
+                if (((vertices[i][1] > lon) !== (vertices[j][1] > lon)) && (lat < (vertices[j][0] - vertices[i][0]) * (lon - vertices[i][1]) / (vertices[j][1] - vertices[i][1] + 0.000000001) + vertices[i][0])) {
+                    intersecta = !intersecta;
+                }
+                j = i;
+            }
+            return intersecta;
+        }
+
+        function calcularDistanciaMinimaPerimetro(lat, lon, vertices) {
+            var p = L.latLng(lat, lon);
+            var minDist = Infinity;
+            for (var i = 0; i < vertices.length; i++) {
+                var v = L.latLng(vertices[i][0], vertices[i][1]);
+                var d = p.distanceTo(v);
+                if (d < minDist) minDist = d;
+            }
+            return minDist;
+        }
+
+        function analisarDadosDasCercas() {
+            limparMarcadoresReajuste();
+            relatoriosCalculados.descarga = [];
+            relatoriosCalculados.cliente = [];
+            indicesNavegacao.descarga = -1;
+            indicesNavegacao.cliente = -1;
+
+            if (!Object.keys(locaisCadastrados).length) return alert("Crie ou importe perímetros antes.");
+            if (!dadosPlanilhaBrutos) return alert("Nenhuma planilha carregada.");
+
+            var tempoMinDescarga = parseFloat(document.getElementById('input-tempo-descarga').value) || 30;
+            var cLat = colunasDetectadas.lat; var cLon = colunasDetectadas.lon; var cTime = colunasDetectadas.time; var cVel = colunasDetectadas.vel;
+
+            var pontosCronologicos = [];
+            dadosPlanilhaBrutos.forEach(linha => {
+                var lat = parseFloat(linha[cLat]); 
+                var lon = parseFloat(linha[cLon]); 
+                var date = mapDataValida(linha[cTime]);
+                var vel = parseFloat(linha[cVel]);
+                if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime())) {
+                    pontosCronologicos.push({ lat: lat, lon: lon, date: date, vel: isNaN(vel) ? 0 : vel });
+                }
+            });
+            pontosCronologicos.sort((a, b) => a.date - b.date);
+
+            Object.keys(locaisCadastrados).forEach(id => {
+                var local = locaisCadastrados[id];
+                var vertices = local.geo.coordenadas;
+                
+                if (local.tipoCerca === "CLIENTE") {
+                    var estado = "FORA"; 
+                    var confirmadoEntrada = null;
+                    var cooldownAte = null; 
+                    var visitasDesteLocal = [];
+
+                    for (var pIdx = 0; pIdx < pontosCronologicos.length; pIdx++) {
+                        var p = pontosCronologicos[pIdx];
+
+                        if (cooldownAte && p.date < cooldownAte) {
+                            continue;
+                        }
+
+                        var estaDentroPoligono = pontoNaCerca(p.lat, p.lon, vertices);
+
+                        if (estado === "FORA") {
+                            if (estaDentroPoligono && p.vel === 0) {
+                                estado = "DENTRO";
+                                confirmadoEntrada = p;
+                            }
+                        } 
+                        else if (estado === "DENTRO") {
+                            if (!estaDentroPoligono) {
+                                var dadoVisita = {
+                                    localNome: local.nome,
+                                    inicio: formatarDataBr(confirmadoEntrada.date),
+                                    fim: formatarDataBr(p.date),
+                                    layerObjeto: local.layer
+                                };
+                                visitasDesteLocal.push(dadoVisita);
+                                relatoriosCalculados.cliente.push(dadoVisita);
+
+                                cooldownAte = new Date(p.date.getTime() + 90 * 60000);
+                                estado = "FORA";
+                                confirmedoEntrada = null;
+                            }
+                        }
+                    }
+
+                    if (estado === "DENTRO" && confirmadoEntrada) {
+                        var dadoPendente = {
+                            localNome: local.nome,
+                            inicio: formatarDataBr(confirmadoEntrada.date),
+                            fim: "Aguardando no cliente",
+                            layerObjeto: local.layer
+                        };
+                        visitasDesteLocal.push(dadoPendente);
+                        relatoriosCalculados.cliente.push(dadoPendente);
+                    }
+
+                    if (visitasDesteLocal.length > 0) {
+                        var htmlPopupClientes = `
+                            <div style="font-size:0.85rem; min-width:240px; max-height:200px; overflow-y:auto;">
+                                <b style="color:var(--cor-cliente);">🟩 Ciclos no Cliente (${visitasDesteLocal.length})</b><br>
+                                <b>Local:</b> ${local.nome}<br>
+                        `;
+                        visitasDesteLocal.forEach((v, idx) => {
+                            var textoSaida = v.fim === "Aguardando no cliente" ? `<span style="color:var(--accent-warning); font-weight:bold;">Aguardando no cliente</span>` : v.fim;
+                            htmlPopupClientes += `
+                                <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
+                                    <b>Operação #${idx + 1}:</b><br>
+                                    📥 Entrada ${v.inicio}<br>
+                                    📤 Saída: ${textoSaida}
+                                </div>
+                            `;
+                        });
+                        htmlPopupClientes += `</div>`;
+                        local.layer.bindPopup(htmlPopupClientes);
+                    } else {
+                        local.layer.bindPopup(`<b>🟩 ${local.nome}</b><br><small style="color:#64748b;">Nenhuma parada com velocidade zero detectada nesta área.</small>`);
+                    }
+                } 
+                else if (local.tipoCerca === "DESCARGA" || !local.tipoCerca) { 
+                    var descargasDesteLocal = [];
+                    var emProcessoDeDescarga = false;
+                    var pontoEntradaValidada = null;
+                    var pontoUltimoDetectado = null;
+
+                    for (var k = 0; k < pontosCronologicos.length; k++) {
+                        var pAtual = pontosCronologicos[k];
+                        var estaDentro = pontoNaCerca(pAtual.lat, pAtual.lon, vertices);
+
+                        if (estaDentro) {
+                            pontoUltimoDetectado = pAtual;
+
+                            if (!emProcessoDeDescarga) {
+                                if (pAtual.vel === 0) {
+                                    emProcessoDeDescarga = true;
+                                    pontoEntradaValidada = pAtual;
+                                }
+                            }
+                        } else {
+                            if (emProcessoDeDescarga && pontoEntradaValidada && pontoUltimoDetectado) {
+                                var duracaoTotalCerca = (pontoUltimoDetectado.date.getTime() - pontoEntradaValidada.date.getTime()) / 60000;
+                                
+                                if (duracaoTotalCerca >= tempoMinDescarga) {
+                                    var dadoDescarga = {
+                                        localNome: local.nome,
+                                        inicio: formatarDataBr(pontoEntradaValidada.date),
+                                        fim: formatarDataBr(pontoUltimoDetectado.date),
+                                        duracao: Math.round(duracaoTotalCerca),
+                                        layerObjeto: local.layer
+                                    };
+                                    relatoriosCalculados.descarga.push(dadoDescarga);
+                                    descargasDesteLocal.push(dadoDescarga);
+                                }
+                            }
+                            emProcessoDeDescarga = false;
+                            pontoEntradaValidada = null;
+                            pontoUltimoDetectado = null;
+                        }
+                    }
+
+                    if (emProcessoDeDescarga && pontoEntradaValidada && pontoUltimoDetectado) {
+                        var duracaoTotalCerca = (pontoUltimoDetectado.date.getTime() - pontoEntradaValidada.date.getTime()) / 60000;
+                        if (duracaoTotalCerca >= tempoMinDescarga) {
+                            var dadoDescarga = {
+                                localNome: local.nome,
+                                inicio: formatarDataBr(pontoEntradaValidada.date),
+                                fim: formatarDataBr(pontoUltimoDetectado.date) + " (Ainda na área)",
+                                duracao: Math.round(duracaoTotalCerca),
+                                layerObjeto: local.layer
+                            };
+                            relatoriosCalculados.descarga.push(dadoDescarga);
+                            descargasDesteLocal.push(dadoDescarga);
+                        }
+                    }
+
+                    if (descargasDesteLocal.length > 0) {
+                        var htmlPopupDescargas = `
+                            <div style="font-size:0.85rem; min-width:230px; max-height:200px; overflow-y:auto;">
+                                <b style="color:var(--cor-descarga);">🟦 Descargas Confirmadas (${descargasDesteLocal.length})</b><br>
+                                <b>Local:</b> ${local.nome}<br>
+                        `;
+                        descargasDesteLocal.forEach((d, idx) => {
+                            htmlPopupDescargas += `
+                                <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
+                                    <b>Operação #${idx + 1} (${d.duracao} min):</b><br>
+                                    📥 Entrada Parado: ${d.inicio}<br>
+                                    📤 Saída Cerca: ${d.fim}
+                                </div>
+                            `;
+                        });
+                        htmlPopupDescargas += `</div>`;
+                        local.layer.bindPopup(htmlPopupDescargas);
+                    } else {
+                        local.layer.bindPopup(`<b>🟦 ${local.nome}</b><br><small style="color:#ef4444;">Nenhuma descarga validada (Exige entrada com vel=0).</small>`);
+                    }
+                }
+            });
+
+            document.getElementById('btn-nav-descarga').style.display = relatoriosCalculados.descarga.length ? "inline-flex" : "none";
+            document.getElementById('btn-nav-cliente').style.display = relatoriosCalculados.cliente.length ? "inline-flex" : "none";
+
+            atualizarBadgesEContadoresTotais();
+            if (relatoriosCalculados.descarga.length) alternarAbaResultados('descarga');
+            else if (relatoriosCalculados.cliente.length) alternarAbaResultados('cliente');
+            else renderizarHistoricoNaAba();
+
+            logDebug("Logística de cercas processada!");
+        }
+
+        function identificarParadasEProibidas() {
+            limparMarcadoresReajuste();
+            camadaEventosDinamicos.clearLayers();
+            
+            relatoriosCalculados.parada = [];
+            relatoriosCalculados.proibida = [];
+            indicesNavegacao.parada = -1;
+            indicesNavegacao.proibida = -1;
+
+            if (!dadosPlanilhaBrutos) return alert("Nenhuma planilha carregada.");
+
+            var tempoMinParada = parseFloat(document.getElementById('input-tempo-parada').value) || 60;
+            var raioMaxMetros = parseFloat(document.getElementById('input-raio-parada').value) || 200;
+
+            var cLat = colunasDetectadas.lat; var cLon = colunasDetectadas.lon; var cTime = colunasDetectadas.time;
+
+            var pontosCronologicos = [];
+            dadosPlanilhaBrutos.forEach((linha, idx) => {
+                var lat = parseFloat(linha[cLat]); var lon = parseFloat(linha[cLon]); var date = mapDataValida(linha[cTime]);
+                if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime())) {
+                    pontosCronologicos.push({ lat: lat, lon: lon, date: date, id: idx + 1 });
+                }
+            });
+            pontosCronologicos.sort((a, b) => a.date - b.date);
+
+            if(pontosCronologicos.length < 2) return alert("Pontos insuficientes.");
+
+            var i = 0;
+            while (i < pontosCronologicos.length) {
+                var pontoInicial = pontosCronologicos[i];
+                var j = i + 1;
+                var grupoDePontos = [pontoInicial];
+
+                while (j < pontosCronologicos.length) {
+                    var proximoPonto = pontosCronologicos[j];
+                    var distancia = L.latLng(pontoInicial.lat, pontoInicial.lon).distanceTo(L.latLng(proximoPonto.lat, proximoPonto.lon));
+
+                    if (distancia <= raioMaxMetros) {
+                        grupoDePontos.push(proximoPonto);
+                        j++;
+                    } else { break; }
+                }
+
+                if (grupoDePontos.length >= 2) {
+                    var pontoFinal = grupoDePontos[grupoDePontos.length - 1];
+                    var tempoGastoMinutos = (pontoFinal.date.getTime() - pontoInicial.date.getTime()) / 60000;
+
+                    if (tempoGastoMinutos >= tempoMinParada) {
+                        var somaLat = 0, somaLon = 0;
+                        grupoDePontos.forEach(p => { somaLat += p.lat; somaLon += p.lon; });
+                        var centroLat = somaLat / grupoDePontos.length;
+                        var centroLon = somaLon / grupoDePontos.length;
+
+                        var cercaProibidaAlvo = null;
+                        Object.keys(locaisCadastrados).forEach(idCerca => {
+                            var local = locaisCadastrados[idCerca];
+                            if (local.tipoCerca === "PROIBIDA") {
+                                if (pontoNaCerca(centroLat, centroLon, local.geo.coordenadas)) {
+                                    cercaProibidaAlvo = local;
+                                }
+                            }
+                        });
+
+                        var objetoRelatorio = {
+                            lat: centroLat, lon: centroLon,
+                            inicio: formatarDataBr(pontoInicial.date),
+                            fim: formatarDataBr(pontoFinal.date),
+                            duracao: Math.round(tempoGastoMinutos),
+                            pontos: grupoDePontos.length
+                        };
+
+                        if (cercaProibidaAlvo) {
+                            objetoRelatorio.localNome = cercaProibidaAlvo.nome;
+                            relatoriosCalculados.proibida.push(objetoRelatorio);
+                            desenharMarcadorAlertaEspecial(objetoRelatorio, "PROIBIDA", raioMaxMetros);
+                        } else {
+                            relatoriosCalculados.parada.push(objetoRelatorio);
+                            desenharMarcadorAlertaEspecial(objetoRelatorio, "GERAL", raioMaxMetros);
+                        }
+                        i = j; 
+                        continue;
+                    }
+                }
+                i++;
+            }
+
+            document.getElementById('btn-nav-parada-geral').style.display = relatoriosCalculados.parada.length ? "inline-flex" : "none";
+            document.getElementById('btn-nav-proibida').style.display = relatoriosCalculados.proibida.length ? "inline-flex" : "none";
+
+            atualizarBadgesEContadoresTotais();
+            if(relatoriosCalculados.proibida.length) alternarAbaResultados('proibida');
+            else if(relatoriosCalculados.parada.length) alternarAbaResultados('parada');
+            else renderizarHistoricoNaAba();
+
+            logDebug(`Varredura finalizada. Paradas identificadas aplicando raio de ${raioMaxMetros}m.`);
+        }
+
+        function desenharMarcadorAlertaEspecial(parada, tipo, raioMax) {
+            var latlng = [parada.lat, parada.lon];
+            var cor = tipo === "PROIBIDA" ? "#dc2626" : "#f59e0b";
+            
+            var rastro = L.circle(latlng, { radius: raioMax, color: cor, fillColor: cor, fillOpacity: 0.20, weight: 1.5 });
+            var mAlerta = L.circleMarker(latlng, { radius: 9, fillColor: cor, color: "#000", weight: 1.5, fillOpacity: 0.9 });
+
+            var html = tipo === "PROIBIDA" 
+                ? `<b style="color:#ef4444;">🚨 ALERTA: PARADA EM ÁREA PROIBIDA</b><br><b>Área:</b> ${parada.localNome}<br>⏳ ${parada.duracao} min<br>📥 ${parada.inicio}<br>📤 ${parada.fim}`
+                : `<b style="color:#d97706;">⚠️ PARADA TRAJETO GERAL</b><br>⏳ Duração: ${parada.duracao} min<br>📥 ${parada.inicio}<br>📤 ${parada.fim}`;
+
+            rastro.bindPopup(html); mAlerta.bindPopup(html);
+            camadaEventosDinamicos.addLayer(rastro);
+            camadaEventosDinamicos.addLayer(mAlerta);
+            
+            parada.marcadorObjeto = mAlerta; 
+        }
+
+        function alternarAbaResultados(aba) {
+            abaAtivaResultados = aba;
+            document.querySelectorAll('.tab-button').forEach(b => b.classList.remove('active'));
+            document.getElementById(`tab-btn-${aba}`).classList.add('active');
+            renderizarHistoricoNaAba();
+        }
+
+        function atualizarBadgesEContadoresTotais() {
+            var totalParadasGerais = relatoriosCalculados.parada.length + relatoriosCalculados.proibida.length;
+            
+            document.getElementById('badge-tab-descarga').innerText = relatoriosCalculados.descarga.length;
+            document.getElementById('badge-tab-cliente').innerText = relatoriosCalculados.cliente.length;
+            document.getElementById('badge-tab-proibida').innerText = relatoriosCalculados.proibida.length;
+            document.getElementById('badge-tab-parada').innerText = relatoriosCalculados.parada.length;
+
+            document.getElementById('summary-paradas').innerText = totalParadasGerais;
+            document.getElementById('summary-descargas').innerText = relatoriosCalculados.descarga.length;
+            document.getElementById('summary-clientes').innerText = relatoriosCalculados.cliente.length;
+        }
+
+        function renderizarHistoricoNaAba() {
+            var box = document.getElementById('log-resultados');
+            box.innerHTML = "";
+            var dados = relatoriosCalculados[abaAtivaResultados];
+
+            if(!dados || dados.length === 0) {
+                box.innerHTML = `<p style="color: #94a3b8; font-size: 0.8rem; text-align: center; margin-top: 15px;">Nenhum registro para esta categoria.</p>`;
+                return;
+            }
+
+            dados.forEach((ev, idx) => {
+                var item = document.createElement('div');
+                if (abaAtivaResultados === 'descarga') {
+                    item.className = "log-item descarga";
+                    item.onclick = function() { indicesNavegacao.descarga = idx; map.fitBounds(ev.layerObjeto.getBounds()); ev.layerObjeto.openPopup(); };
+                    item.innerHTML = `<div><b>🟦 ${ev.localNome} (#${idx+1})</b></div>
+                                      <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Permanência: <b>${ev.duracao} min</b><br>Entrada: ${ev.inicio}<br>Saída: ${ev.fim}</div>`;
+                } 
+                else if (abaAtivaResultados === 'cliente') {
+                    item.className = "log-item cliente";
+                    item.onclick = function() { indicesNavegacao.cliente = idx; map.fitBounds(ev.layerObjeto.getBounds()); ev.layerObjeto.openPopup(); };
+                    
+                    var corTextoFim = ev.fim === "Aguardando no cliente" ? "color:#f59e0b; font-weight:bold;" : "";
+                    item.innerHTML = `<div><b>🟩 ${ev.localNome} (#${idx+1})</b></div>
+                                      <div style="font-size:0.75rem; color:#475569; margin-top:3px;">⏱️ Chegada: ${ev.inicio}<br>⏱️ Saída: <span style="${corTextoFim}">${ev.fim}</span></div>`;
+                }
+                else if (abaAtivaResultados === 'proibida') {
+                    item.className = "log-item proibida";
+                    item.onclick = function() { indicesNavegacao.proibida = idx; map.setView(ev.marcadorObjeto.getLatLng(), 16); ev.marcadorObjeto.openPopup(); };
+                    item.innerHTML = `<div><b style="color:var(--accent-danger);">🚨 Alerta: ${ev.localNome} (#${idx+1})</b></div>
+                                      <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Tempo Retido: <span style="font-weight:bold; color:red;">${ev.duracao} min</span><br>Intervalo: ${ev.inicio} até ${ev.fim}</div>`;
+                }
+                else if (abaAtivaResultados === 'parada') {
+                    item.className = "log-item parada-longa";
+                    item.onclick = function() { indicesNavegacao.parada = idx; map.setView(ev.marcadorObjeto.getLatLng(), 16); ev.marcadorObjeto.openPopup(); };
+                    item.innerHTML = `<div><b style="color:#d97706;">⚠️ Parada Trajeto (#${idx+1})</b></div>
+                                      <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Duração: <b>${ev.duracao} min</b><br>Período: ${ev.inicio} - ${ev.fim}</div>`;
+                }
+                item.style.cursor = "pointer";
+                box.appendChild(item);
+            });
+        }
+
+        function navegarColecao(tipo) {
+            var dados = relatoriosCalculados[tipo];
+            if (!dados || dados.length === 0) return;
+
+            indicesNavegacao[tipo]++;
+            if (indicesNavegacao[tipo] >= dados.length || indicesNavegacao[tipo] < 0) { indicesNavegacao[tipo] = 0; }
+            
+            var alvo = dados[indicesNavegacao[tipo]];
+            alternarAbaResultados(tipo);
+
+            if (tipo === 'descarga' || tipo === 'cliente') {
+                map.fitBounds(alvo.layerObjeto.getBounds(), { padding: [40, 40], maxZoom: 16 });
+                alvo.layerObjeto.openPopup();
+            } else {
+                map.setView(alvo.marcadorObjeto.getLatLng(), 16);
+                alvo.marcadorObjeto.openPopup();
+            }
+        }
+
+        function exportarBaseJSON() {
+            var arrayExportacao = [];
+            Object.keys(locaisCadastrados).forEach(id => {
+                var local = locaisCadastrados[id];
+                arrayExportacao.push({
+                    nome: local.nome,
+                    type: local.type, 
+                    tipoCerca: local.tipoCerca || "DESCARGA", 
+                    coordenadasOriginais: local.coordenadasOriginais,
+                    geo: local.geo
+                });
+            });
+            if (!arrayExportacao.length) return alert("Sem cercas para exportar.");
+            var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
+            var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'cercas_logistica_v21.json'; a.click();
+        }
+
+        function importarBaseJSON(input) {
+            var file = input.files[0]; if (!file) return;
+            var reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    var dadosJson = JSON.parse(e.target.result);
+                    camadaDesenhos.clearLayers(); 
+                    locaisCadastrados = {}; 
+                    limparMarcadoresReajuste();
+                    limparResultadosLogica();
+
+                    dadosJson.forEach(item => {
+                        var pts = item.geo.coordenadas.map(p => L.latLng(p[0], p[1]));
+                        
+                        var tipoCercaDefinido = item.tipoCerca ? item.tipoCerca.toUpperCase() : "DESCARGA";
+                        var cor = obterCorPorTipo(tipoCercaDefinido);
+
+                        var layer = L.polygon(pts, {color: cor, fillColor: cor, fillOpacity: 0.35, bubblingMouseEvents: false});
+                        var id = L.stamp(layer); 
+                        
+                        var emoji = obterEmojiPorTipo(tipoCercaDefinido);
+                        layer.bindPopup(`<b>${emoji} ${item.nome}</b>`);
+                        
+                        layer.on('click', function(e) { L.DomEvent.stopPropagation(e); activarReajusteDePontos(id); });
+                        camadaDesenhos.addLayer(layer);
+
+                        locaisCadastrados[id] = { 
+                            nome: item.nome, 
+                            type: item.type || "polygon", 
+                            tipoCerca: tipoCercaDefinido,
+                            layer: layer, 
+                            coordenadasOriginais: JSON.parse(JSON.stringify(item.coordenadasOriginais || item.geo.coordenadas)),
+                            geo: item.geo 
+                        };
+                    });
+                    atualizarListaLocais(); 
+            logDebug("Base de cercas digitais importada com sucesso.");
+        } catch(err) { logDebug("Erro na importação: " + err.message, true); }
+    };
+    reader.readAsText(file);
+}
+// ==========================================
+// INICIALIZAÇÃO BLINDADA DO SUPABASE
+// ==========================================
+// Aqui DEVE ser o link HTTPS do seu projeto
+const MINHA_URL_SUPABASE = 'https://kjvjqrtwrikuoicsqqqn.supabase.co';
+
+// Garanta também que a sua chave pública (anon) esteja correta abaixo:
+const MINHA_CHAVE_SUPABASE = 'sb_publishable_RRlpDE9Gzgd2zb3XJFt8Qw_HE-NEHAD';
+
+// Usamos um nome único (bancoSupabase) para nunca conflitar com variáveis internas
+var bancoSupabase = null;
+try {
+    if (window.supabase && typeof window.supabase.createClient === 'function') {
+        bancoSupabase = window.supabase.createClient(MINHA_URL_SUPABASE, MINHA_CHAVE_SUPABASE);
+    }
+} catch (e) {
+    console.error("Erro ao carregar o cliente do banco de dados:", e);
+}
+// ==========================================
+// CONTROLE DE EXIBIÇÃO DO MODAL DE LOGIN (SUPABASE)
+// ==========================================
+var modoAuthAtual = "login"; // pode ser "login" ou "cadastro"
+
+document.getElementById('btn-login-trigger').addEventListener('click', async function() {
+    var textoBotao = document.getElementById('btn-login-trigger').innerText;
+
+    // Se o botão estiver no modo de "Sair", desloga o usuário no Supabase
+    if (textoBotao.includes("SAIR DA CONTA")) {
+        if (bancoSupabase) {
+            await bancoSupabase.auth.signOut();
+            alert("Sessão encerrada com sucesso!");
+            window.location.reload(); // Recarrega para limpar o mapa e resetar os botões
+        }
+        return;
+    }
+
+    // Se não for logout, abre o modal normalmente (comportamento antigo)
+    document.getElementById('login-modal').style.display = 'flex';
+    configurarModoAuth("login");
+});
+
+function fecharModalLogin() {
+    document.getElementById('login-modal').style.display = 'none';
+}
+
+// Alternador dinâmico entre tela de Login e tela de Cadastro
+document.getElementById('auth-switch-link').addEventListener('click', function(e) {
+    e.preventDefault();
+    if (modoAuthAtual === "login") {
+        configurarModoAuth("cadastro");
+    } else {
+        configurarModoAuth("login");
+    }
+});
+
+function configurarModoAuth(modo) {
+    modoAuthAtual = modo;
+    var txtTitulo = document.getElementById('login-modal-title');
+    var btnPrincipal = document.getElementById('btn-auth-primary');
+    var txtSwitch = document.getElementById('auth-switch-text');
+    var linkSwitch = document.getElementById('auth-switch-link');
+
+    if (modo === "login") {
+        txtTitulo.innerText = "Acessar Sistema";
+        btnPrincipal.innerText = "Entrar";
+        btnPrincipal.style.background = "#2563eb";
+        txtSwitch.innerText = "Não tem uma conta?";
+        linkSwitch.innerText = "Cadastre-se";
+    } else {
+        txtTitulo.innerText = "Criar Nova Conta";
+        btnPrincipal.innerText = "Cadastrar Usuário";
+        btnPrincipal.style.background = "#10b981"; // Cor verde para cadastro
+        txtSwitch.innerText = "Já possui uma conta?";
+        linkSwitch.innerText = "Fazer Login";
+    }
+}
+
+// Evento do botão principal (Conectado ao Supabase com segurança)
+document.getElementById('btn-auth-primary').addEventListener('click', async function() {
+    var email = document.getElementById('auth-email').value;
+    var senha = document.getElementById('auth-password').value;
+    var btnPrincipal = document.getElementById('btn-auth-primary');
+
+   function gerenciarAutenticacao() {
+    console.log("Botão clicado com sucesso!");
+}
+
+    if (!bancoSupabase) {
+        alert("Erro: O banco de dados não foi inicializado corretamente.");
+        return;
+    }
+
+    btnPrincipal.innerText = "Aguarde...";
+    btnPrincipal.disabled = true;
+
+    try {
+        if(modoAuthAtual === "login") {
+            console.log("Executando login para:", email);
+            const { data, error } = await bancoSupabase.auth.signInWithPassword({ email: email, password: senha });
+            
+            if (error) {
+                alert("Erro no acesso: " + error.message);
+                btnPrincipal.innerText = "Entrar";
+                btnPrincipal.disabled = false;
+            } else {
+                alert("Acesso concedido!");
+                fecharModalLogin();
+                window.location.reload(); 
+            }
+        } else {
+            console.log("Executando cadastro para:", email);
+            const { data, error } = await bancoSupabase.auth.signUp({ email: email, password: senha });
+            
+            if (error) {
+                alert("Erro ao cadastrar: " + error.message);
+                btnPrincipal.innerText = "Cadastrar Usuário";
+                btnPrincipal.disabled = false;
+            } else {
+                alert("Cadastro realizado com sucesso! Verifique seu e-mail para confirmação.");
+                configurarModoAuth("login");
+                btnPrincipal.disabled = false;
+            }
+        }
+    } catch (err) {
+        alert("Erro inesperado: " + err.message);
+        btnPrincipal.disabled = false;
+    }
+});
+// ==========================================
+// CONTROLE DE SESSÃO E INTEGRAÇÃO REAL (SUPABASE)
+// ==========================================
+
+// Verificador automático de Sessão Ativa
+async function verificarSessao() {
+    if (!bancoSupabase) return;
+
+    try {
+        const { data: { user } } = await bancoSupabase.auth.getUser();
+        const btnTrigger = document.getElementById('btn-login-trigger');
+        const infoUser = document.getElementById('user-logged-info');
+        const btnSalvar = document.getElementById('btn-salvar-supabase');
+
+        if (!btnTrigger) return;
+
+        if (user) {
+            btnTrigger.innerText = "🚪 SAIR DA CONTA";
+            btnTrigger.style.background = "#ef4444"; 
+            if (infoUser) {
+                infoUser.innerText = "Conectado como: " + user.email;
+                infoUser.style.display = "inline-block";
+            }
+            if (btnSalvar) btnSalvar.style.display = "block"; // Mostra o botão "Salvar Alterações"
+            
+            // Puxa os dados salvos do usuário automaticamente
+            carregarDadosDoUsuario(user.id);
+        } else {
+            btnTrigger.innerText = "🔐 ACESSAR / CADASTRAR";
+            btnTrigger.style.background = "#2563eb";
+            if (infoUser) infoUser.style.display = "none";
+            if (btnSalvar) btnSalvar.style.display = "none"; // Esconde o botão se deslogar
+        }
+    } catch (err) {
+        console.error("Erro na checagem de sessão:", err);
+    }
+}
+
+// FUNÇÃO PARA SALVAR AS CERCAS/ROTAS NO SUPABASE
+async function salvarDadosNoSupabase() {
+    if (!bancoSupabase) return;
+    
+    const { data: { user } } = await bancoSupabase.auth.getUser();
+    if (!user) {
+        alert("Você precisa estar logado para salvar as alterações.");
+        return;
+    }
+
+    const btnSalvar = document.getElementById('btn-salvar-supabase');
+    btnSalvar.innerText = "Salvando...";
+    btnSalvar.disabled = true;
+
+    // Converte o objeto 'locaisCadastrados' limpando referências circulares do Leaflet
+    let dadosLimpos = [];
+    if (typeof locaisCadastrados !== 'undefined') {
+        for (let id in locaisCadastrados) {
+            let local = locaisCadastrados[id];
+            dadosLimpos.push({
+                id: id,
+                nome: local.nome,
+                type: local.type,
+                tipoCerca: local.tipoCerca,
+                coordenadasOriginais: local.coordenadasOriginais,
+                geo: local.geo
+            });
+        }
+    }
+
+    const dadosParaSalvar = { cercas: dadosLimpos };
+
+    try {
+        const { error } = await bancoSupabase
+            .from('BASEjson')
+            .upsert(
+                { user_id: user.id, dados_json: dadosParaSalvar },
+                { onConflict: 'user_id' }
+            );
+
+        if (error) {
+            alert("Erro ao salvar dados: " + error.message);
+        } else {
+            alert("Dados salvos na nuvem com sucesso!");
+        }
+    } catch (err) {
+        console.error(err);
+        alert("Erro de conexão ao salvar.");
+    } finally {
+        btnSalvar.innerText = "💾 SALVAR ALTERAÇÕES NA NUVEM";
+        btnSalvar.disabled = false;
+    }
+}
+
+// FUNÇÃO PARA CARREGAR OS DADOS LOGO APÓS O LOGIN
+async function carregarDadosDoUsuario(userId) {
+    if (!bancoSupabase) return;
+
+    try {
+        const { data, error } = await bancoSupabase
+            .from('BASEjson')
+            .select('dados_json')
+            .eq('user_id', userId)
+            .single();
+
+        if (error && error.code !== 'PGRST116') { 
+            console.error("Erro ao puxar dados:", error.message);
+            return;
+        }
+
+        if (data && data.dados_json && data.dados_json.cercas && typeof locaisCadastrados !== 'undefined') {
+            console.log("Dados carregados da nuvem:", data.dados_json.cercas);
+            
+            locaisCadastrados = {};
+            
+            if (typeof camadaDesenhos !== 'undefined' && typeof camadaDesenhos.clearLayers === 'function') {
+                camadaDesenhos.clearLayers();
+            }
+
+            data.dados_json.cercas.forEach(cerca => {
+                let tipoGeometria = cerca.type || cerca.tipoGeometria;
+                let coordenadas = cerca.coordenadasOriginais || cerca.coordenadas || (cerca.geo && cerca.geo.coordenadas);
+                let nomeCerca = cerca.nome || cerca.nomeLocal;
+                let idCerca = cerca.id || 'cerca_' + Math.random().toString(36).substr(2, 9);
+                let tipoDaCerca = cerca.tipoCerca; // Ex: "CLIENTE", "PROIBIDA", etc.
+                
+                if (!coordenadas) return;
+
+                // 🎨 CONFIGURADOR DE CORES: Define a cor com base no tipo da cerca
+let estiloCerca = { color: "#3388ff", fillColor: "#3388ff", fillOpacity: 0.2 }; // Azul padrão para Descarga e outros
+
+if (tipoDaCerca) {
+    let tipoUpper = tipoDaCerca.toUpperCase();
+    if (tipoUpper.includes("CLIENTE") || tipoUpper.includes("VERDE")) {
+        estiloCerca = { color: "#28a745", fillColor: "#28a745", fillOpacity: 0.2 }; // Verde para Clientes
+    } else if (tipoUpper.includes("PROIBIDA") || tipoUpper.includes("RESTRI") || tipoUpper.includes("VERMELHA")) {
+        estiloCerca = { color: "#dc3545", fillColor: "#dc3545", fillOpacity: 0.2 }; // Vermelho para Zonas Proibidas
+    } else if (tipoUpper.includes("DESCARGA") || tipoUpper.includes("AZUL")) {
+        estiloCerca = { color: "#007bff", fillColor: "#007bff", fillOpacity: 0.2 }; // Azul específico para Áreas de Descarga
+    }
+}
+
+                let novaCamada;
+                
+                // Recria a geometria visual aplicando o estilo configurado acima
+                if (tipoGeometria === "polygon" || tipoGeometria === "Polygon") {
+                    novaCamada = L.polygon(coordenadas, estiloCerca);
+                } else if (tipoGeometria === "rectangle" || tipoGeometria === "Rectangle") {
+                    novaCamada = L.rectangle(coordenadas, estiloCerca);
+                } else if (tipoGeometria === "circle" || tipoGeometria === "Circle") {
+                    let raio = cerca.geo && cerca.geo.radius ? cerca.geo.radius : 60;
+                    estiloCerca.radius = raio;
+                    novaCamada = L.circle(coordenadas[0] || coordenadas, estiloCerca);
+                }
+
+                if (novaCamada) {
+                    if (typeof map !== 'undefined') novaCamada.addTo(map);
+                    
+                    let emoji = typeof obterEmojiPorTipo === "function" ? obterEmojiPorTipo(tipoDaCerca) : "📍";
+                    novaCamada.bindPopup(`<b>${emoji} ${nomeCerca}</b>`);
+                    
+                    novaCamada.on('click', function(e) {
+                        L.DomEvent.stopPropagation(e);
+                        if (typeof activarReajusteDePontos === "function") activarReajusteDePontos(idCerca);
+                    });
+
+                    locaisCadastrados[idCerca] = {
+                        nome: nomeCerca,
+                        type: tipoGeometria,
+                        tipoCerca: tipoDaCerca,
+                        layer: novaCamada,
+                        coordenadasOriginais: coordenadas,
+                        geo: cerca.geo || { coordenadas: coordenadas }
+                    };
+                }
+            });
+
+            if (typeof atualizarListaLocais === "function") {
+                atualizarListaLocais();
+            }
+        }
+    } catch (err) {
+        console.error("Erro ao processar dados carregados:", err);
+    }
+}
+
+// Vincula o evento de clique ao botão que você acabou de criar no HTML
+document.getElementById('btn-salvar-supabase').addEventListener('click', salvarDadosNoSupabase);
+
+// Executa a checagem de sessão de forma segura assim que a página carregar por completo
+window.addEventListener('load', function() {
+    setTimeout(verificarSessao, 800);
+});
+// =================================================================
+// FUNÇÃO PARA REMOVER CERCA DA TELA, MEMÓRIA E DA NUVEM PERMANENTEMENTE
+// =================================================================
+function removerCerca(id) {
+    if (confirm("Deseja realmente excluir permanentemente esta cerca virtual?")) {
+        // Limpa as bolinhas vermelhas de edição se estiverem ativas nesta cerca
+        if (typeof cercaSendoEditadaId !== 'undefined' && cercaSendoEditadaId === id) {
+            limparMarcadoresReajuste();
+        }
+        
+        var local = locaisCadastrados[id];
+        if (local) {
+            // 1. Remove a camada visual do mapa de forma segura
+            if (map && map.hasLayer(local.layer)) {
+                map.removeLayer(local.layer);
+            }
+            if (typeof camadaDesenhos !== 'undefined' && camadaDesenhos.hasLayer(local.layer)) {
+                camadaDesenhos.removeLayer(local.layer);
+            }
+            
+            // 2. Apaga completamente o registro da memória do sistema
+            delete locaisCadastrados[id];
+            
+            // 3. Atualiza as listagens visuais da barra lateral
+            if (typeof atualizarListaLocais === "function") {
+                atualizarListaLocais();
+            }
+            
+            logDebug("Cerca removida localmente. Clique no botão de Salvar para aplicar as mudanças na Nuvem.");
+        } else {
+            console.error("Cerca com o ID fornecido não foi encontrada na memória.");
+        }
+    }
+}
+
+// CONTROLE DE SESSÃO E INTEGRAÇÃO REAL (SUPABASE) - CORRIGIDO
+// ==========================================
+
+// Variável global única de modo
+window.authMode = "login"; 
+
+// 1. FUNÇÃO PARA ATIVAR O MODO DE RECUPERAÇÃO DE SENHA
+function mudarModoParaRecuperar(e) {
+    if (e) e.preventDefault();
+    window.authMode = "recuperar";
+    
+    document.getElementById("login-modal-title").innerText = "Recuperar Senha";
+    document.getElementById("auth-password").parentElement.style.display = "none"; // Oculta o container da senha
+    
+    document.getElementById("btn-auth-primary").innerText = "Enviar e-mail de recuperação";
+    document.getElementById("auth-switch-text").innerText = "Lembrou-se da senha?";
+    document.getElementById("auth-switch-link").innerText = "Voltar para o Login";
+}
+
+// 2. FUNÇÃO AUXILIAR PARA VOLTAR AO LOGIN PADRÃO
+function configurarModoLogin() {
+    window.authMode = "login";
+    document.getElementById("login-modal-title").innerText = "Acessar Sistema";
+    document.getElementById("auth-email").parentElement.style.display = "flex";
+    document.getElementById("auth-password").parentElement.style.display = "flex"; // Mostra a senha novamente
+    
+    const btnPrincipal = document.getElementById('btn-auth-primary');
+    btnPrincipal.innerText = "Entrar";
+    btnPrincipal.style.background = "#2563eb";
+    btnPrincipal.disabled = false;
+
+    document.getElementById("auth-switch-text").innerText = "Não tem uma conta?";
+    document.getElementById("auth-switch-link").innerText = "Cadastre-se";
+}
+
+// 3. LOGICA DO LINK ALTERNADOR ABAIXO DO BOTÃO (LOGIN <-> CADASTRO <-> RECUPERAR)
+document.getElementById("auth-switch-link").addEventListener("click", function(e) {
+    e.preventDefault();
+    
+    if (window.authMode === "recuperar") {
+        configurarModoLogin();
+        return;
+    }
+    
+    if (window.authMode === "login") {
+        window.authMode = "cadastro";
+        document.getElementById("login-modal-title").innerText = "Criar Nova Conta";
+        const btnPrincipal = document.getElementById('btn-auth-primary');
+        btnPrincipal.innerText = "Cadastrar Usuário";
+        btnPrincipal.style.background = "#10b981"; // Verde para cadastro
+        document.getElementById("auth-switch-text").innerText = "Já possui uma conta?";
+        document.getElementById("auth-switch-link").innerText = "Fazer Login";
+    } else {
+        configurarModoLogin();
+    }
+});
+
+// 4. FUNÇÃO DE DISPARO EXCLUSIVA DO BOTÃO (CHAMADA VIA ONCLICK)
+async function gerenciarAutenticacao() {
+    var email = document.getElementById('auth-email').value.trim();
+    var senha = document.getElementById('auth-password').value;
+    var btnPrincipal = document.getElementById('btn-auth-primary');
+
+    if (!bancoSupabase) {
+        alert("Erro: O banco de dados não foi inicializado corretamente.");
+        return;
+    }
+
+    // --- FLUXO 1: SOLICITAÇÃO DE RECUPERAÇÃO DE SENHA ---
+    if (window.authMode === "recuperar") {
+        if (!email) {
+            alert("Por favor, introduza o seu e-mail para recuperar a senha.");
+            return;
+        }
+        
+        btnPrincipal.innerText = "Enviando...";
+        btnPrincipal.disabled = true;
+
+        const { error } = await bancoSupabase.auth.resetPasswordForEmail(email, {
+            redirectTo: window.location.href,
+        });
+
+        if (error) {
+            alert("Erro ao enviar e-mail de recuperação: " + error.message);
+            btnPrincipal.innerText = "Enviar e-mail de recuperação";
+            btnPrincipal.disabled = false;
+        } else {
+            alert("E-mail de recuperação enviado! Verifique a sua caixa de entrada.");
+            configurarModoLogin();
+            fecharModalLogin();
+        }
+        return; 
+    }
+
+    // --- FLUXO 2: GRAVAÇÃO DA NOVA SENHA (PÓS-CLIQUE NO E-MAIL) ---
+    if (window.authMode === "processar-nova-senha") {
+        if (!senha || senha.length < 6) {
+            alert("A nova senha precisa de ter pelo menos 6 caracteres.");
+            return;
+        }
+
+        btnPrincipal.innerText = "Atualizando...";
+        btnPrincipal.disabled = true;
+
+        const { error } = await bancoSupabase.auth.updateUser({ password: senha });
+
+        if (error) {
+            alert("Erro ao atualizar a senha: " + error.message);
+            btnPrincipal.innerText = "Salvar Nova Senha";
+            btnPrincipal.disabled = false;
+        } else {
+            alert("Senha atualizada com sucesso! Já pode iniciar sessão.");
+            window.location.href = window.location.pathname; 
+        }
+        return; 
+    }
+
+    // Validação de campos exclusiva para os fluxos comuns de Login e Cadastro
+    if (!email || !senha) {
+        alert("Por favor, preencha todos os campos.");
+        return;
+    }
+
+    btnPrincipal.innerText = "Aguarde...";
+    btnPrincipal.disabled = true;
+
+    // --- FLUXO 3: CADASTRO PADRÃO ---
+    if (window.authMode === "cadastro") {
+        try {
+            console.log("Executando cadastro para:", email);
+            const { data, error } = await bancoSupabase.auth.signUp({ email: email, password: senha });
+            
+            if (error) {
+                alert("Erro ao cadastrar: " + error.message);
+                btnPrincipal.innerText = "Cadastrar Usuário";
+                btnPrincipal.disabled = false;
+            } else {
+                alert("Cadastro realizado com sucesso! Verifique seu e-mail para confirmação.");
+                configurarModoLogin();
+            }
+        } catch (err) {
+            alert("Erro inesperado: " + err.message);
+            btnPrincipal.disabled = false;
+        }
+        return;
+    }
+
+    // --- FLUXO 4: LOGIN PADRÃO ---
+    if (window.authMode === "login") {
+        try {
+            console.log("Executando login para:", email);
+            const { data, error } = await bancoSupabase.auth.signInWithPassword({ email: email, password: senha });
+            
+            if (error) {
+                alert("Erro no acesso: " + error.message);
+                btnPrincipal.innerText = "Entrar";
+                btnPrincipal.disabled = false;
+            } else {
+                alert("Acesso concedido!");
+                fecharModalLogin();
+                window.location.reload(); 
+            }
+        } catch (err) {
+            alert("Erro inesperado: " + err.message);
+            btnPrincipal.disabled = false;
+        }
+    }
+}
+
+// 5. DETECTOR AUTOMÁTICO DO LINK DE RETORNO DO SUPABASE
+window.addEventListener('DOMContentLoaded', () => {
+    if (window.location.hash && window.location.hash.includes("type=recovery")) {
+        window.authMode = "processar-nova-senha";
+        
+        document.getElementById("login-modal").style.display = "flex";
+        document.getElementById("login-modal-title").innerText = "Definir Nova Senha";
+        
+        document.getElementById("auth-email").parentElement.style.display = "none"; 
+        document.getElementById("auth-password").parentElement.style.display = "flex"; 
+        document.getElementById("auth-password").parentElement.querySelector('label').innerText = "Nova Senha";
+        document.getElementById("auth-password").placeholder = "Introduza a nova senha (mín. 6 caracteres)";
+        document.getElementById("auth-password").value = "";
+        
+        document.getElementById("btn-auth-primary").innerText = "Salvar Nova Senha";
+        document.getElementById("auth-switch-link").parentElement.style.display = "none"; 
+    }
+});
+</script> </body>
+</html>
