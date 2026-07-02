@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador de Rotas - Telemetria Avançada</title>
+    <title>Analisador Logístico de Cercas virtuais</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -141,7 +141,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais
+            🗺️ Analisador Logístico de Cercas virtuais v22.8
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -227,7 +227,107 @@
                         <button id="btn-ultima-posicao" class="btn-accent" style="padding: 6px; background-color: #0284c7;" onclick="focarUltimaPosicao()">📍 Última Posição</button>
                     </div>
                     <div id="file-info" style="margin-top: 4px; font-size: 0.75rem; color: var(--accent-success); display: none; font-weight: bold;"></div>
-                    
+                    <!-- FILTRO DE DATA/HORA -->
+<div style="
+    margin-top:10px;
+    padding:8px;
+    border:1px solid #cbd5e1;
+    border-radius:8px;
+    background:#f8fafc;
+">
+
+    <div style="
+        display:flex;
+        justify-content:space-between;
+        align-items:center;
+        margin-bottom:8px;
+    ">
+        <strong style="font-size:0.78rem; color:#334155;">
+            ⏱️ Intervalo da Telemetria
+        </strong>
+
+        <button id="btn-editar-periodo"
+            onclick="alternarEdicaoPeriodo()"
+            style="
+                width:auto;
+                padding:5px 10px;
+                font-size:0.72rem;
+                background:#0ea5e9;
+            ">
+            ✏️ Editar
+        </button>
+    </div>
+
+    <div style="
+    display:grid;
+    grid-template-columns: 1fr 1fr;
+    gap:8px;
+    align-items:end;
+">
+
+        <div>
+    <label style="
+        font-size:0.70rem;
+        font-weight:bold;
+        display:block;
+        margin-bottom:3px;
+    ">
+        Inicial
+    </label>
+
+    <input
+        type="datetime-local"
+        id="datahora-inicio"
+        disabled
+        style="
+            width:100%;
+            padding:5px;
+            border:1px solid #cbd5e1;
+            border-radius:6px;
+            font-size:0.74rem;
+        "
+    >
+</div>
+
+<div>
+    <label style="
+        font-size:0.70rem;
+        font-weight:bold;
+        display:block;
+        margin-bottom:3px;
+    ">
+        Final
+    </label>
+
+    <input
+        type="datetime-local"
+        id="datahora-fim"
+        disabled
+        style="
+            width:100%;
+            padding:5px;
+            border:1px solid #cbd5e1;
+            border-radius:6px;
+            font-size:0.74rem;
+        "
+    >
+</div>
+
+        
+
+       <button
+    id="btn-aplicar-periodo"
+    onclick="aplicarFiltroPeriodo()"
+    style="
+        grid-column: span 2;
+        background:#16a34a;
+        margin-top:2px;
+    ">
+            ✅ Aplicar Período
+        </button>
+
+    </div>
+</div>
                     <div class="legenda">
                         <div class="legenda-item"><span class="dot" style="background: #eab308;"></span> Parado (0 km/h)</div>
                         <div class="legenda-item"><span class="dot" style="background: #22c55e;"></span> Movimento</div>
@@ -778,7 +878,63 @@
             };
             reader.readAsArrayBuffer(file);
         }
+function formatarDatetimeLocal(date) {
+    if (!(date instanceof Date) || isNaN(date.getTime())) return "";
 
+    var ano = date.getFullYear();
+    var mes = String(date.getMonth() + 1).padStart(2, '0');
+    var dia = String(date.getDate()).padStart(2, '0');
+
+    var horas = String(date.getHours()).padStart(2, '0');
+    var minutos = String(date.getMinutes()).padStart(2, '0');
+
+    return `${ano}-${mes}-${dia}T${horas}:${minutos}`;
+}
+
+function alternarEdicaoPeriodo() {
+    var inicio = document.getElementById('datahora-inicio');
+    var fim = document.getElementById('datahora-fim');
+    var btnAplicar = document.getElementById('btn-aplicar-periodo');
+
+    var novoEstado = inicio.disabled;
+
+    inicio.disabled = !novoEstado;
+    fim.disabled = !novoEstado;
+
+    btnAplicar.style.display = novoEstado ? 'block' : 'none';
+}
+
+function aplicarFiltroPeriodo() {
+
+    if (!dadosPlanilhaBrutos || !dadosPlanilhaBrutos.length) {
+        alert("Nenhuma planilha carregada.");
+        return;
+    }
+
+    var inicioValor = document.getElementById('datahora-inicio').value;
+    var fimValor = document.getElementById('datahora-fim').value;
+
+    if (!inicioValor || !fimValor) {
+        alert("Preencha as datas.");
+        return;
+    }
+
+    var inicio = new Date(inicioValor);
+    var fim = new Date(fimValor);
+
+    var cTime = colunasDetectadas.time;
+
+    dadosPlanilhaBrutos = dadosPlanilhaBrutos.filter(linha => {
+
+        var dataLinha = mapDataValida(linha[cTime]);
+
+        return dataLinha >= inicio && dataLinha <= fim;
+    });
+
+    plotarPontosImediato();
+
+    logDebug("Filtro de período aplicado.");
+}
         function mapearEPlotarAutomatico(headers, nome, count) {
             document.getElementById('file-info').innerText = `📊 ${nome} (${count} pontos)`;
             document.getElementById('file-info').style.display = 'block';
@@ -867,7 +1023,21 @@
                 camadaLinhasTrajeto.addLayer(L.marker([meioLat, meioLng], { icon: divIconeSeta }));
             }
 
-            if (bounds.length > 0) { map.fitBounds(bounds); logDebug(`Pontos plotados.`); }
+            if (bounds.length > 0) {
+
+    map.fitBounds(bounds);
+
+    var primeiraData = pontosOrdenados[0].dataHora;
+    var ultimaData = pontosOrdenados[pontosOrdenados.length - 1].dataHora;
+
+    document.getElementById('datahora-inicio').value =
+        formatarDatetimeLocal(primeiraData);
+
+    document.getElementById('datahora-fim').value =
+        formatarDatetimeLocal(ultimaData);
+
+    logDebug(`Pontos plotados.`);
+}
         }
 
         function pontoNaCerca(lat, lon, vertices) {
