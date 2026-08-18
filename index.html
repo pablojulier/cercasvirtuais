@@ -1064,154 +1064,137 @@ function aplicarFiltroPeriodo() {
         }
 
         function analisarDadosDasCercas() {
-            limparMarcadoresReajuste();
-            relatoriosCalculados.descarga = [];
-            relatoriosCalculados.cliente = [];
-            indicesNavegacao.descarga = -1;
-            indicesNavegacao.cliente = -1;
+    limparMarcadoresReajuste();
+    relatoriosCalculados.descarga = [];
+    relatoriosCalculados.cliente = [];
+    indicesNavegacao.descarga = -1;
+    indicesNavegacao.cliente = -1;
 
-            if (!Object.keys(locaisCadastrados).length) return alert("Crie ou importe perímetros antes.");
-            if (!dadosPlanilhaBrutos) return alert("Nenhuma planilha carregada.");
+    if (!Object.keys(locaisCadastrados).length) return alert("Crie ou importe perímetros antes.");
+    if (!dadosPlanilhaBrutos) return alert("Nenhuma planilha carregada.");
 
-            var tempoMinDescarga = parseFloat(document.getElementById('input-tempo-descarga').value) || 30;
-            var cLat = colunasDetectadas.lat; var cLon = colunasDetectadas.lon; var cTime = colunasDetectadas.time; var cVel = colunasDetectadas.vel;
+    var tempoMinDescarga = parseFloat(document.getElementById('input-tempo-descarga').value) || 30;
+    var cLat = colunasDetectadas.lat; var cLon = colunasDetectadas.lon; var cTime = colunasDetectadas.time; var cVel = colunasDetectadas.vel;
 
-            var pontosCronologicos = [];
-            dadosPlanilhaBrutos.forEach(linha => {
-                var lat = parseFloat(linha[cLat]); 
-                var lon = parseFloat(linha[cLon]); 
-                var date = mapDataValida(linha[cTime]);
-                var vel = parseFloat(linha[cVel]);
-                if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime())) {
-                    pontosCronologicos.push({ lat: lat, lon: lon, date: date, vel: isNaN(vel) ? 0 : vel });
+    var pontosCronologicos = [];
+    dadosPlanilhaBrutos.forEach(linha => {
+        var lat = parseFloat(linha[cLat]); 
+        var lon = parseFloat(linha[cLon]); 
+        var date = mapDataValida(linha[cTime]);
+        var vel = parseFloat(linha[cVel]);
+        if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime())) {
+            pontosCronologicos.push({ lat: lat, lon: lon, date: date, vel: isNaN(vel) ? 0 : vel });
+        }
+    });
+    pontosCronologicos.sort((a, b) => a.date - b.date);
+
+    Object.keys(locaisCadastrados).forEach(id => {
+        var local = locaisCadastrados[id];
+        var vertices = local.geo.coordenadas;
+        
+        if (local.tipoCerca === "CLIENTE") {
+            var estado = "FORA"; 
+            var confirmadoEntrada = null;
+            var cooldownAte = null; 
+            var visitasDesteLocal = [];
+
+            for (var pIdx = 0; pIdx < pontosCronologicos.length; pIdx++) {
+                var p = pontosCronologicos[pIdx];
+
+                if (cooldownAte && p.date < cooldownAte) {
+                    continue;
                 }
-            });
-            pontosCronologicos.sort((a, b) => a.date - b.date);
 
-            Object.keys(locaisCadastrados).forEach(id => {
-                var local = locaisCadastrados[id];
-                var vertices = local.geo.coordenadas;
-                
-                if (local.tipoCerca === "CLIENTE") {
-                    var estado = "FORA"; 
-                    var confirmadoEntrada = null;
-                    var cooldownAte = null; 
-                    var visitasDesteLocal = [];
+                var estaDentroPoligono = pontoNaCerca(p.lat, p.lon, vertices);
 
-                    for (var pIdx = 0; pIdx < pontosCronologicos.length; pIdx++) {
-                        var p = pontosCronologicos[pIdx];
-
-                        if (cooldownAte && p.date < cooldownAte) {
-                            continue;
-                        }
-
-                        var estaDentroPoligono = pontoNaCerca(p.lat, p.lon, vertices);
-
-                        if (estado === "FORA") {
-                            if (estaDentroPoligono && p.vel === 0) {
-                                estado = "DENTRO";
-                                confirmadoEntrada = p;
-                            }
-                        } 
-                        else if (estado === "DENTRO") {
-                            if (!estaDentroPoligono) {
-                                var dadoVisita = {
-                                    localNome: local.nome,
-                                    inicio: formatarDataBr(confirmadoEntrada.date),
-                                    fim: formatarDataBr(p.date),
-                                    layerObjeto: local.layer
-                                };
-                                visitasDesteLocal.push(dadoVisita);
-                                relatoriosCalculados.cliente.push(dadoVisita);
-
-                                cooldownAte = new Date(p.date.getTime() + 90 * 60000);
-                                estado = "FORA";
-                                confirmedoEntrada = null;
-                            }
-                        }
-                    }
-
-                    if (estado === "DENTRO" && confirmadoEntrada) {
-                        var dadoPendente = {
-                            localNome: local.nome,
-                            inicio: formatarDataBr(confirmadoEntrada.date),
-                            fim: "Aguardando no cliente",
-                            layerObjeto: local.layer
-                        };
-                        visitasDesteLocal.push(dadoPendente);
-                        relatoriosCalculados.cliente.push(dadoPendente);
-                    }
-
-                    if (visitasDesteLocal.length > 0) {
-                        var htmlPopupClientes = `
-                            <div style="font-size:0.85rem; min-width:240px; max-height:200px; overflow-y:auto;">
-                                <b style="color:var(--cor-cliente);">🟩 Ciclos no Cliente (${visitasDesteLocal.length})</b><br>
-                                <b>Local:</b> ${local.nome}<br>
-                        `;
-                        visitasDesteLocal.forEach((v, idx) => {
-                            var textoSaida = v.fim === "Aguardando no cliente" ? `<span style="color:var(--accent-warning); font-weight:bold;">Aguardando no cliente</span>` : v.fim;
-                            htmlPopupClientes += `
-                                <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
-                                    <b>Operação #${idx + 1}:</b><br>
-                                    📥 Entrada ${v.inicio}<br>
-                                    📤 Saída: ${textoSaida}
-                                </div>
-                            `;
-                        });
-                        htmlPopupClientes += `</div>`;
-                        local.layer.bindPopup(htmlPopupClientes);
-                    } else {
-                        local.layer.bindPopup(`<b>🟩 ${local.nome}</b><br><small style="color:#64748b;">Nenhuma parada com velocidade zero detectada nesta área.</small>`);
+                if (estado === "FORA") {
+                    if (estaDentroPoligono && p.vel === 0) {
+                        estado = "DENTRO";
+                        confirmadoEntrada = p;
                     }
                 } 
-                else if (local.tipoCerca === "DESCARGA" || !local.tipoCerca) { 
-                    var descargasDesteLocal = [];
-                    var emProcessoDeDescarga = false;
-                    var pontoEntradaValidada = null;
-                    var pontoUltimoDetectado = null;
+                else if (estado === "DENTRO") {
+                    if (!estaDentroPoligono) {
+                        var dadoVisita = {
+                            localNome: local.nome,
+                            inicio: formatarDataBr(confirmadoEntrada.date),
+                            fim: formatarDataBr(p.date),
+                            layerObjeto: local.layer
+                        };
+                        visitasDesteLocal.push(dadoVisita);
+                        relatoriosCalculados.cliente.push(dadoVisita);
 
-                    for (var k = 0; k < pontosCronologicos.length; k++) {
-                        var pAtual = pontosCronologicos[k];
-                        var estaDentro = pontoNaCerca(pAtual.lat, pAtual.lon, vertices);
+                        cooldownAte = new Date(p.date.getTime() + 90 * 60000);
+                        estado = "FORA";
+                        confirmadoEntrada = null;
+                    }
+                }
+            }
 
-                        if (estaDentro) {
-                            pontoUltimoDetectado = pAtual;
+            if (estado === "DENTRO" && confirmadoEntrada) {
+                var dadoPendente = {
+                    localNome: local.nome,
+                    inicio: formatarDataBr(confirmadoEntrada.date),
+                    fim: "Aguardando no cliente",
+                    layerObjeto: local.layer
+                };
+                visitasDesteLocal.push(dadoPendente);
+                relatoriosCalculados.cliente.push(dadoPendente);
+            }
 
-                            if (!emProcessoDeDescarga) {
-                                if (pAtual.vel === 0) {
-                                    emProcessoDeDescarga = true;
-                                    pontoEntradaValidada = pAtual;
-                                }
-                            }
-                        } else {
-                            if (emProcessoDeDescarga && pontoEntradaValidada && pontoUltimoDetectado) {
-                                var duracaoTotalCerca = (pontoUltimoDetectado.date.getTime() - pontoEntradaValidada.date.getTime()) / 60000;
-                                
-                                if (duracaoTotalCerca >= tempoMinDescarga) {
-                                    var dadoDescarga = {
-                                        localNome: local.nome,
-                                        inicio: formatarDataBr(pontoEntradaValidada.date),
-                                        fim: formatarDataBr(pontoUltimoDetectado.date),
-                                        duracao: Math.round(duracaoTotalCerca),
-                                        layerObjeto: local.layer
-                                    };
-                                    relatoriosCalculados.descarga.push(dadoDescarga);
-                                    descargasDesteLocal.push(dadoDescarga);
-                                }
-                            }
-                            emProcessoDeDescarga = false;
-                            pontoEntradaValidada = null;
-                            pontoUltimoDetectado = null;
+            if (visitasDesteLocal.length > 0) {
+                var htmlPopupClientes = `
+                    <div style="font-size:0.85rem; min-width:240px; max-height:200px; overflow-y:auto;">
+                        <b style="color:var(--cor-cliente);">🟩 Ciclos no Cliente (${visitasDesteLocal.length})</b><br>
+                        <b>Local:</b> ${local.nome}<br>
+                `;
+                visitasDesteLocal.forEach((v, idx) => {
+                    var textoSaida = v.fim === "Aguardando no cliente" 
+                        ? `<span style="color:var(--accent-warning); font-weight:bold;">Aguardando no cliente</span>` 
+                        : `<a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${v.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${v.fim}</a>`;
+
+                    htmlPopupClientes += `
+                        <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
+                            <b>Operação #${idx + 1}:</b><br>
+                            📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${v.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${v.inicio}</a><br>
+                            📤 Saída: ${textoSaida}
+                        </div>
+                    `;
+                });
+                htmlPopupClientes += `</div>`;
+                local.layer.bindPopup(htmlPopupClientes);
+            } else {
+                local.layer.bindPopup(`<b>🟩 ${local.nome}</b><br><small style="color:#64748b;">Nenhuma parada com velocidade zero detectada nesta área.</small>`);
+            }
+        } 
+        else if (local.tipoCerca === "DESCARGA" || !local.tipoCerca) { 
+            var descargasDesteLocal = [];
+            var emProcessoDeDescarga = false;
+            var pontoEntradaValidada = null;
+            var pontoUltimoDetectado = null;
+
+            for (var k = 0; k < pontosCronologicos.length; k++) {
+                var pAtual = pontosCronologicos[k];
+                var estaDentro = pontoNaCerca(pAtual.lat, pAtual.lon, vertices);
+
+                if (estaDentro) {
+                    pontoUltimoDetectado = pAtual;
+
+                    if (!emProcessoDeDescarga) {
+                        if (pAtual.vel === 0) {
+                            emProcessoDeDescarga = true;
+                            pontoEntradaValidada = pAtual;
                         }
                     }
-
+                } else {
                     if (emProcessoDeDescarga && pontoEntradaValidada && pontoUltimoDetectado) {
                         var duracaoTotalCerca = (pontoUltimoDetectado.date.getTime() - pontoEntradaValidada.date.getTime()) / 60000;
+                        
                         if (duracaoTotalCerca >= tempoMinDescarga) {
                             var dadoDescarga = {
                                 localNome: local.nome,
                                 inicio: formatarDataBr(pontoEntradaValidada.date),
-                                fim: formatarDataBr(pontoUltimoDetectado.date) + " (Ainda na área)",
+                                fim: formatarDataBr(pontoUltimoDetectado.date),
                                 duracao: Math.round(duracaoTotalCerca),
                                 layerObjeto: local.layer
                             };
@@ -1219,40 +1202,60 @@ function aplicarFiltroPeriodo() {
                             descargasDesteLocal.push(dadoDescarga);
                         }
                     }
-
-                    if (descargasDesteLocal.length > 0) {
-                        var htmlPopupDescargas = `
-                            <div style="font-size:0.85rem; min-width:230px; max-height:200px; overflow-y:auto;">
-                                <b style="color:var(--cor-descarga);">🟦 Descargas Confirmadas (${descargasDesteLocal.length})</b><br>
-                                <b>Local:</b> ${local.nome}<br>
-                        `;
-                        descargasDesteLocal.forEach((d, idx) => {
-                            htmlPopupDescargas += `
-                                <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
-                                    <b>Operação #${idx + 1} (${d.duracao} min):</b><br>
-                                    📥 Entrada Parado: ${d.inicio}<br>
-                                    📤 Saída Cerca: ${d.fim}
-                                </div>
-                            `;
-                        });
-                        htmlPopupDescargas += `</div>`;
-                        local.layer.bindPopup(htmlPopupDescargas);
-                    } else {
-                        local.layer.bindPopup(`<b>🟦 ${local.nome}</b><br><small style="color:#ef4444;">Nenhuma descarga validada (Exige entrada com vel=0).</small>`);
-                    }
+                    emProcessoDeDescarga = false;
+                    pontoEntradaValidada = null;
+                    pontoUltimoDetectado = null;
                 }
-            });
+            }
 
-            document.getElementById('btn-nav-descarga').style.display = relatoriosCalculados.descarga.length ? "inline-flex" : "none";
-            document.getElementById('btn-nav-cliente').style.display = relatoriosCalculados.cliente.length ? "inline-flex" : "none";
+            if (emProcessoDeDescarga && pontoEntradaValidada && pontoUltimoDetectado) {
+                var duracaoTotalCerca = (pontoUltimoDetectado.date.getTime() - pontoEntradaValidada.date.getTime()) / 60000;
+                if (duracaoTotalCerca >= tempoMinDescarga) {
+                    var dadoDescarga = {
+                        localNome: local.nome,
+                        inicio: formatarDataBr(pontoEntradaValidada.date),
+                        fim: formatarDataBr(pontoUltimoDetectado.date),
+                        duracao: Math.round(duracaoTotalCerca),
+                        layerObjeto: local.layer
+                    };
+                    relatoriosCalculados.descarga.push(dadoDescarga);
+                    descargasDesteLocal.push(dadoDescarga);
+                }
+            }
 
-            atualizarBadgesEContadoresTotais();
-            if (relatoriosCalculados.descarga.length) alternarAbaResultados('descarga');
-            else if (relatoriosCalculados.cliente.length) alternarAbaResultados('cliente');
-            else renderizarHistoricoNaAba();
-
-            logDebug("Logística de cercas processada!");
+            if (descargasDesteLocal.length > 0) {
+                var htmlPopupDescargas = `
+                    <div style="font-size:0.85rem; min-width:230px; max-height:200px; overflow-y:auto;">
+                        <b style="color:var(--cor-descarga);">🟦 Descargas Confirmadas (${descargasDesteLocal.length})</b><br>
+                        <b>Local:</b> ${local.nome}<br>
+                `;
+                descargasDesteLocal.forEach((d, idx) => {
+                    htmlPopupDescargas += `
+                        <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
+                            <b>Operação #${idx + 1} (${d.duracao} min):</b><br>
+                            📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.inicio}</a><br>
+                            📤 Saída Cerca: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.fim}</a>
+                        </div>
+                    `;
+                });
+                htmlPopupDescargas += `</div>`;
+                local.layer.bindPopup(htmlPopupDescargas);
+            } else {
+                local.layer.bindPopup(`<b>🟦 ${local.nome}</b><br><small style="color:#ef4444;">Nenhuma descarga validada (Exige entrada com vel=0).</small>`);
+            }
         }
+    });
+
+    document.getElementById('btn-nav-descarga').style.display = relatoriosCalculados.descarga.length ? "inline-flex" : "none";
+    document.getElementById('btn-nav-cliente').style.display = relatoriosCalculados.cliente.length ? "inline-flex" : "none";
+
+    atualizarBadgesEContadoresTotais();
+    if (relatoriosCalculados.descarga.length) alternarAbaResultados('descarga');
+    else if (relatoriosCalculados.cliente.length) alternarAbaResultados('cliente');
+    else renderizarHistoricoNaAba();
+
+    logDebug("Logística de cercas processada!");
+}
 
         function identificarParadasEProibidas() {
             limparMarcadoresReajuste();
@@ -1390,47 +1393,57 @@ function aplicarFiltroPeriodo() {
         }
 
         function renderizarHistoricoNaAba() {
-            var box = document.getElementById('log-resultados');
-            box.innerHTML = "";
-            var dados = relatoriosCalculados[abaAtivaResultados];
+    var box = document.getElementById('log-resultados');
+    box.innerHTML = "";
+    var dados = relatoriosCalculados[abaAtivaResultados];
 
-            if(!dados || dados.length === 0) {
-                box.innerHTML = `<p style="color: #94a3b8; font-size: 0.8rem; text-align: center; margin-top: 15px;">Nenhum registro para esta categoria.</p>`;
-                return;
-            }
+    if(!dados || dados.length === 0) {
+        box.innerHTML = `<p style="color: #94a3b8; font-size: 0.8rem; text-align: center; margin-top: 15px;">Nenhum registro para esta categoria.</p>`;
+        return;
+    }
 
-            dados.forEach((ev, idx) => {
-                var item = document.createElement('div');
-                if (abaAtivaResultados === 'descarga') {
-                    item.className = "log-item descarga";
-                    item.onclick = function() { indicesNavegacao.descarga = idx; map.fitBounds(ev.layerObjeto.getBounds()); ev.layerObjeto.openPopup(); };
-                    item.innerHTML = `<div><b>🟦 ${ev.localNome} (#${idx+1})</b></div>
-                                      <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Permanência: <b>${ev.duracao} min</b><br>Entrada: ${ev.inicio}<br>Saída: ${ev.fim}</div>`;
-                } 
-                else if (abaAtivaResultados === 'cliente') {
-                    item.className = "log-item cliente";
-                    item.onclick = function() { indicesNavegacao.cliente = idx; map.fitBounds(ev.layerObjeto.getBounds()); ev.layerObjeto.openPopup(); };
-                    
-                    var corTextoFim = ev.fim === "Aguardando no cliente" ? "color:#f59e0b; font-weight:bold;" : "";
-                    item.innerHTML = `<div><b>🟩 ${ev.localNome} (#${idx+1})</b></div>
-                                      <div style="font-size:0.75rem; color:#475569; margin-top:3px;">⏱️ Chegada: ${ev.inicio}<br>⏱️ Saída: <span style="${corTextoFim}">${ev.fim}</span></div>`;
-                }
-                else if (abaAtivaResultados === 'proibida') {
-                    item.className = "log-item proibida";
-                    item.onclick = function() { indicesNavegacao.proibida = idx; map.setView(ev.marcadorObjeto.getLatLng(), 16); ev.marcadorObjeto.openPopup(); };
-                    item.innerHTML = `<div><b style="color:var(--accent-danger);">🚨 Alerta: ${ev.localNome} (#${idx+1})</b></div>
-                                      <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Tempo Retido: <span style="font-weight:bold; color:red;">${ev.duracao} min</span><br>Intervalo: ${ev.inicio} até ${ev.fim}</div>`;
-                }
-                else if (abaAtivaResultados === 'parada') {
-                    item.className = "log-item parada-longa";
-                    item.onclick = function() { indicesNavegacao.parada = idx; map.setView(ev.marcadorObjeto.getLatLng(), 16); ev.marcadorObjeto.openPopup(); };
-                    item.innerHTML = `<div><b style="color:#d97706;">⚠️ Parada Trajeto (#${idx+1})</b></div>
-                                      <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Duração: <b>${ev.duracao} min</b><br>Período: ${ev.inicio} - ${ev.fim}</div>`;
-                }
-                item.style.cursor = "pointer";
-                box.appendChild(item);
-            });
+    dados.forEach((ev, idx) => {
+        var item = document.createElement('div');
+        if (abaAtivaResultados === 'descarga') {
+            item.className = "log-item descarga";
+            item.onclick = function() { indicesNavegacao.descarga = idx; map.fitBounds(ev.layerObjeto.getBounds()); ev.layerObjeto.openPopup(); };
+            
+            item.innerHTML = `<div><b>🟦 ${ev.localNome} (#${idx+1})</b></div>
+                              <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Permanência: <b>${ev.duracao} min</b><br>
+                              📥 Entrada: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${ev.inicio}</a><br>
+                              📤 Saída: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${ev.fim}</a></div>`;
+        } 
+        else if (abaAtivaResultados === 'cliente') {
+            item.className = "log-item cliente";
+            item.onclick = function() { indicesNavegacao.cliente = idx; map.fitBounds(ev.layerObjeto.getBounds()); ev.layerObjeto.openPopup(); };
+            
+            var htmlSaida = ev.fim === "Aguardando no cliente" 
+                ? `<span style="color:#f59e0b; font-weight:bold;">Aguardando no cliente</span>` 
+                : `<a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${ev.fim}</a>`;
+
+            item.innerHTML = `<div><b>🟩 ${ev.localNome} (#${idx+1})</b></div>
+                              <div style="font-size:0.75rem; color:#475569; margin-top:3px;">
+                              ⏱️ Chegada: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${ev.inicio}</a><br>
+                              ⏱️ Saída: ${htmlSaida}</div>`;
         }
+        else if (abaAtivaResultados === 'proibida') {
+            item.className = "log-item proibida";
+            item.onclick = function() { indicesNavegacao.proibida = idx; map.setView(ev.marcadorObjeto.getLatLng(), 16); ev.marcadorObjeto.openPopup(); };
+            item.innerHTML = `<div><b style="color:var(--accent-danger);">🚨 Alerta: ${ev.localNome} (#${idx+1})</b></div>
+                              <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Tempo Retido: <span style="font-weight:bold; color:red;">${ev.duracao} min</span><br>
+                              Intervalo: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.inicio}'); return false;" style="color:#2563eb; text-decoration:underline;">${ev.inicio}</a> até <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.fim}'); return false;" style="color:#2563eb; text-decoration:underline;">${ev.fim}</a></div>`;
+        }
+        else if (abaAtivaResultados === 'parada') {
+            item.className = "log-item parada-longa";
+            item.onclick = function() { indicesNavegacao.parada = idx; map.setView(ev.marcadorObjeto.getLatLng(), 16); ev.marcadorObjeto.openPopup(); };
+            item.innerHTML = `<div><b style="color:#d97706;">⚠️ Parada Trajeto (#${idx+1})</b></div>
+                              <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Duração: <b>${ev.duracao} min</b><br>
+                              Período: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.inicio}'); return false;" style="color:#2563eb; text-decoration:underline;">${ev.inicio}</a> - <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.fim}'); return false;" style="color:#2563eb; text-decoration:underline;">${ev.fim}</a></div>`;
+        }
+        item.style.cursor = "pointer";
+        box.appendChild(item);
+    });
+}
 
         function navegarColecao(tipo) {
             var dados = relatoriosCalculados[tipo];
@@ -2050,5 +2063,46 @@ window.addEventListener('DOMContentLoaded', () => {
         document.getElementById("auth-switch-link").parentElement.style.display = "none"; 
     }
 });
+
+function focarPontoPorDataEHora(textoDataHora) {
+    if (!dadosPlanilhaBrutos || !dadosPlanilhaBrutos.length) {
+        alert("Nenhum dado de telemetria disponível no mapa.");
+        return;
+    }
+
+    var cLat = colunasDetectadas.lat;
+    var cLon = colunasDetectadas.lon;
+    var cTime = colunasDetectadas.time;
+
+    // Procura o ponto na planilha cuja data formatada corresponda exatamente ao texto clicado
+    var pontoEncontrado = dadosPlanilhaBrutos.find(function(linha) {
+        var dataHoraObj = mapDataValida(linha[cTime]);
+        return formatarDataBr(dataHoraObj) === textoDataHora;
+    });
+
+    if (pontoEncontrado) {
+        var lat = parseFloat(pontoEncontrado[cLat]);
+        var lon = parseFloat(pontoEncontrado[cLon]);
+
+        if (!isNaN(lat) && !isNaN(lon)) {
+            // Ajusta a visão do mapa para as coordenadas encontradas e aplica zoom detalhado
+            map.setView([lat, lon], 18);
+
+            // Procura o marcador correspondente na camada de pontos para abrir seu popup
+            var marcadorCorrespondente = arrayPontosPlotados.find(function(marcador) {
+                var pos = marcador.getLatLng();
+                return Math.abs(pos.lat - lat) < 0.00001 && Math.abs(pos.lng - lon) < 0.00001;
+            });
+
+            if (marcadorCorrespondente) {
+                marcadorCorrespondente.openPopup();
+            }
+
+            logDebug(`Focado no ponto das ${textoDataHora} (Lat: ${lat.toFixed(5)}, Lon: ${lon.toFixed(5)})`);
+        }
+    } else {
+        alert("Ponto de telemetria não localizado no mapa para esta data/hora.");
+    }
+}
 </script> </body>
 </html>
