@@ -101,9 +101,15 @@
         .legenda-item { display: flex; align-items: center; gap: 4px; }
         .dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; border: 1px solid #000; }
 
+        /* Empilhamento fixo dos painéis no canto superior esquerdo do mapa */
+        .map-left-stack {
+            position: absolute; top: 15px; left: 15px; z-index: 1010;
+            display: flex; flex-direction: column; gap: 10px; width: 260px;
+        }
+
         /* Painel de Controle de Desenho */
         .custom-draw-panel {
-            position: absolute; top: 15px; left: 15px; background: white; padding: 10px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.25); z-index: 1010; display: flex; flex-direction: column; gap: 8px; width: 260px;
+            background: white; padding: 10px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.25); display: flex; flex-direction: column; gap: 8px; width: 100%;
         }
         .draw-row { display: flex; gap: 6px; width: 100%; }
         .draw-btn {
@@ -114,6 +120,44 @@
         .draw-btn.success-btn { background: #10b981; color: white; border-color: #059669; }
 
         .layer-toggle-panel { position: absolute; top: 15px; right: 15px; z-index: 1010; display: flex; flex-direction: column; gap: 8px; }
+
+        /* ===== Menu fixo de acesso rápido às cercas (resolve cliques em cercas sobrepostas) ===== */
+        .cercas-menu-panel {
+            background: white; padding: 10px; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.25);
+            width: 100%; max-height: 240px; display: flex; flex-direction: column;
+        }
+        .cercas-menu-header {
+            display: flex; align-items: center; justify-content: space-between;
+            font-size: 0.75rem; font-weight: bold; color: #1e293b; margin-bottom: 7px; flex-shrink: 0;
+        }
+        .cercas-menu-badge {
+            background: #1e293b; color: #fff; border-radius: 10px; padding: 1px 8px; font-size: 0.68rem;
+        }
+        .cercas-menu-list {
+            list-style: none; margin: 0; padding: 0 2px 0 0;
+            display: flex; flex-direction: column; gap: 5px; overflow-y: auto;
+        }
+        .cerca-menu-item {
+            display: flex; align-items: center; gap: 6px;
+            padding: 5px 8px; border-radius: 6px;
+            border: 1.5px solid var(--cor); background: #f8fafc;
+            cursor: pointer; font-size: 0.72rem; font-weight: 600; color: #1e293b;
+            transition: background 0.15s, transform 0.15s;
+        }
+        .cerca-menu-item:hover { background: #eef2f7; transform: translateX(2px); }
+        .cerca-menu-item.processada { border-width: 2.5px; background: #f0fdf4; }
+        .cerca-menu-dot { width: 9px; height: 9px; border-radius: 50%; background: var(--cor); flex-shrink: 0; }
+        .cerca-menu-emoji { font-size: 0.8rem; flex-shrink: 0; }
+        .cerca-menu-nome { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+        .cerca-menu-check { font-size: 0.72rem; flex-shrink: 0; }
+        .cerca-menu-item.destacado { animation: pulseDestaqueCerca 1.3s ease 2; }
+        @keyframes pulseDestaqueCerca {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(37,99,235,0.55); }
+            50% { box-shadow: 0 0 0 6px rgba(37,99,235,0); }
+        }
+        .cercas-menu-vazio {
+            font-size: 0.7rem; color: #64748b; text-align: center; padding: 8px 4px; line-height: 1.4;
+        }
         .layer-btn {
             background: #2563eb; color: white; font-weight: bold; border: 2px solid white; box-shadow: 0 4px 10px rgba(0,0,0,0.2); padding: 8px 14px; border-radius: 30px; cursor: pointer; width: auto; font-size: 0.8rem;
         }
@@ -141,7 +185,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v22.8
+            🗺️ Analisador Logístico de Cercas virtuais v24
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -425,20 +469,33 @@
         </div>
 
         <div id="map-container">
-            <div class="custom-draw-panel">
-                <div class="config-field" style="font-size:0.75rem;">
-                    <label>TIPO DE CERCA VIRTUAL:</label>
-                    <select id="select-tipo-cerca-desenho">
-                        <option value="DESCARGA">🟦 Cerca de Descarga (Azul)</option>
-                        <option value="CLIENTE">🟩 Área do Cliente (Verde)</option>
-                        <option value="PROIBIDA">🟥 Área Proibida (Vermelho)</option>
-                    </select>
+            <div class="map-left-stack">
+                <div class="custom-draw-panel">
+                    <div class="config-field" style="font-size:0.75rem;">
+                        <label>TIPO DE CERCA VIRTUAL:</label>
+                        <select id="select-tipo-cerca-desenho">
+                            <option value="DESCARGA">🟦 Cerca de Descarga (Azul)</option>
+                            <option value="CLIENTE">🟩 Área do Cliente (Verde)</option>
+                            <option value="PROIBIDA">🟥 Área Proibida (Vermelho)</option>
+                        </select>
+                    </div>
+                    <div class="draw-row">
+                        <button id="btn-mode-rect" class="draw-btn" onclick="mudarModoDesenho('RETANGULO')">Rect (2 Cliques)</button>
+                        <button id="btn-mode-poly" class="draw-btn" onclick="mudarModoDesenho('POLIGONO')">Polígono Livre</button>
+                    </div>
+                    <button id="btn-poly-done" class="draw-btn success-btn" style="display: none; width:100%;" onclick="finalizarPoligonoManual()">✓ Finalizar Polígono</button>
                 </div>
-                <div class="draw-row">
-                    <button id="btn-mode-rect" class="draw-btn" onclick="mudarModoDesenho('RETANGULO')">Rect (2 Cliques)</button>
-                    <button id="btn-mode-poly" class="draw-btn" onclick="mudarModoDesenho('POLIGONO')">Polígono Livre</button>
+
+                <button class="draw-btn" style="width:100%; flex:none; background:#fee2e2; color:#991b1b; border-color:#fca5a5;" onclick="limparPinosDoMenuCercas()">🧹 Limpar Menus</button>
+
+                <div class="cercas-menu-panel" id="painel-menu-cercas">
+                    <div class="cercas-menu-header">
+                        <span>📍 Cercas com Atividade</span>
+                        <span class="cercas-menu-badge" id="badge-menu-cercas">0</span>
+                    </div>
+                    <ul class="cercas-menu-list" id="lista-menu-cercas"></ul>
+                    <div class="cercas-menu-vazio" id="menu-cercas-vazio">Nenhuma cerca com pontos de telemetria dentro ainda. Clique numa cerca no mapa para trazê-la aqui.</div>
                 </div>
-                <button id="btn-poly-done" class="draw-btn success-btn" style="display: none; width:100%;" onclick="finalizarPoligonoManual()">✓ Finalizar Polígono</button>
             </div>
 
             <div class="layer-toggle-panel">
@@ -580,10 +637,200 @@
             return "🟦";
         }
 
+        /* ==========================================================================
+           MENU FIXO DE ACESSO RÁPIDO ÀS CERCAS
+           Resolve o problema de cercas sobrepostas (ex: Descarga azul sob Cliente
+           verde) impedindo o clique direto no polígono. Em vez de pinos soltos no
+           mapa, as cercas relevantes aparecem numa lista fixa no canto do mapa,
+           logo abaixo da ferramenta de desenho. Só entram na lista cercas que
+           tenham pelo menos 1 ponto de telemetria dentro (evita poluição visual).
+           Cercas já processadas (com relatório de logística calculado) ficam
+           destacadas. Clicar numa cerca verde no mapa "traz" para a lista o par
+           azul+verde daquele local, mesmo que ainda não tenham pontos dentro.
+           ========================================================================== */
+
+        var idsForcadosNoMenuCercas = new Set();
+        var menuCercasEscondidoManualmente = false;
+        var PERMANENCIA_MINIMA_MENU_MIN = 5;
+
+        function calcularCentroideCerca(layer) {
+            try {
+                if (layer instanceof L.Circle && layer.getLatLng) return layer.getLatLng();
+                var latlngs = layer.getLatLngs ? layer.getLatLngs() : null;
+                if (!latlngs) return layer.getLatLng ? layer.getLatLng() : null;
+                while (Array.isArray(latlngs[0])) { latlngs = latlngs[0]; }
+                if (!latlngs.length) return null;
+                var somaLat = 0, somaLon = 0;
+                latlngs.forEach(function(ll) { somaLat += ll.lat; somaLon += ll.lng; });
+                return L.latLng(somaLat / latlngs.length, somaLon / latlngs.length);
+            } catch (e) { return null; }
+        }
+
+        function distanciaEmMetrosEntrePontos(a, b) {
+            var R = 6371000;
+            var dLat = (b.lat - a.lat) * Math.PI / 180;
+            var dLon = (b.lng - a.lng) * Math.PI / 180;
+            var lat1 = a.lat * Math.PI / 180, lat2 = b.lat * Math.PI / 180;
+            var h = Math.sin(dLat / 2) * Math.sin(dLat / 2) + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+            return R * 2 * Math.atan2(Math.sqrt(h), Math.sqrt(1 - h));
+        }
+
+        // Verifica se a cerca teve uma PERMANÊNCIA CONTÍNUA mínima (padrão: 5 min) de algum
+        // ponto de telemetria dentro dela — evita contar passagens rápidas/de trajeto como "atividade"
+        function cercaTemPontosDePosicaoDentro(local) {
+            try {
+                if (!dadosPlanilhaBrutos || !dadosPlanilhaBrutos.length) return false;
+                var vertices = local && local.geo && local.geo.coordenadas;
+                if (!vertices || vertices.length < 3) return false;
+
+                var cLat = colunasDetectadas.lat, cLon = colunasDetectadas.lon, cTime = colunasDetectadas.time;
+                if (cLat == null || cLon == null || cTime == null) return false;
+
+                var pontos = [];
+                dadosPlanilhaBrutos.forEach(function(linha) {
+                    var lat = parseFloat(linha[cLat]);
+                    var lon = parseFloat(linha[cLon]);
+                    var date = mapDataValida(linha[cTime]);
+                    if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime())) {
+                        pontos.push({ lat: lat, lon: lon, date: date });
+                    }
+                });
+                if (!pontos.length) return false;
+                pontos.sort(function(a, b) { return a.date - b.date; });
+
+                var entrada = null;
+                for (var i = 0; i < pontos.length; i++) {
+                    var p = pontos[i];
+                    if (pontoNaCerca(p.lat, p.lon, vertices)) {
+                        if (!entrada) entrada = p;
+                        var minutosDentro = (p.date.getTime() - entrada.date.getTime()) / 60000;
+                        if (minutosDentro >= PERMANENCIA_MINIMA_MENU_MIN) return true;
+                    } else {
+                        entrada = null;
+                    }
+                }
+                return false;
+            } catch (e) { return false; }
+        }
+
+        // Verifica se a cerca já tem resultado calculado pelo "Processar Cercas logísticas"
+        function cercaFoiProcessadaLogisticamente(local) {
+            if (!local || !local.layer) return false;
+            var achouDescarga = (relatoriosCalculados.descarga || []).some(function(r) { return r.layerObjeto === local.layer; });
+            if (achouDescarga) return true;
+            var achouCliente = (relatoriosCalculados.cliente || []).some(function(r) { return r.layerObjeto === local.layer; });
+            return achouCliente;
+        }
+
+        // Retorna os ids de todas as cercas cujo centróide está a até THRESHOLD_M do centróide da cerca informada (mesmo "local físico")
+        function obterClusterDeCercasProximas(idReferencia) {
+            var local = locaisCadastrados[idReferencia]; if (!local) return [idReferencia];
+            var centro = calcularCentroideCerca(local.layer); if (!centro) return [idReferencia];
+            var THRESHOLD_M = 80;
+            var resultado = [idReferencia];
+            Object.keys(locaisCadastrados).forEach(function(outroId) {
+                if (outroId === idReferencia) return;
+                var outro = locaisCadastrados[outroId];
+                var centroOutro = calcularCentroideCerca(outro.layer);
+                if (centroOutro && distanciaEmMetrosEntrePontos(centro, centroOutro) <= THRESHOLD_M) {
+                    resultado.push(outroId);
+                }
+            });
+            return resultado;
+        }
+
+        // Chamado ao clicar em uma cerca no mapa: força a exibição do par azul+verde daquele local no menu fixo
+        function destacarClusterNoMenuFixo(id) {
+            menuCercasEscondidoManualmente = false;
+            var cluster = obterClusterDeCercasProximas(id);
+            cluster.forEach(function(cid) { idsForcadosNoMenuCercas.add(cid); });
+            renderizarMarcadoresDeAcessoCercas();
+
+            cluster.forEach(function(cid) {
+                var elItem = document.getElementById('cerca-menu-item-' + cid);
+                if (elItem) {
+                    elItem.classList.add('destacado');
+                    setTimeout(function() { elItem.classList.remove('destacado'); }, 2600);
+                }
+            });
+            var primeiroEl = document.getElementById('cerca-menu-item-' + cluster[0]);
+            if (primeiroEl && primeiroEl.scrollIntoView) primeiroEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        // Limpa TODOS os pinos do menu fixo (inclusive os detectados automaticamente por permanência
+        // de telemetria) — não mexe na telemetria, apenas oculta o menu até a próxima ação relevante
+        // (novo processamento, nova plotagem de telemetria ou clique manual numa cerca).
+        function limparPinosDoMenuCercas(silencioso) {
+            idsForcadosNoMenuCercas.clear();
+            menuCercasEscondidoManualmente = true;
+            limparMarcadoresReajuste();
+            renderizarMarcadoresDeAcessoCercas();
+            if (!silencioso) logDebug("Todos os pinos do menu de cercas foram limpos.");
+        }
+
+        function renderizarMarcadoresDeAcessoCercas() {
+            var painel = document.getElementById('painel-menu-cercas');
+            var lista = document.getElementById('lista-menu-cercas');
+            var vazio = document.getElementById('menu-cercas-vazio');
+            var badge = document.getElementById('badge-menu-cercas');
+            if (!painel || !lista || !vazio || !badge) return;
+
+            lista.innerHTML = '';
+
+            var idsRelevantes = Object.keys(locaisCadastrados).filter(function(id) {
+                var local = locaisCadastrados[id];
+                if (!local) return false;
+                if (idsForcadosNoMenuCercas.has(id)) return true;
+                if (menuCercasEscondidoManualmente) return false;
+                return cercaTemPontosDePosicaoDentro(local);
+            });
+
+            // Ordena: processadas primeiro, depois por nome
+            idsRelevantes.sort(function(a, b) {
+                var pa = cercaFoiProcessadaLogisticamente(locaisCadastrados[a]) ? 0 : 1;
+                var pb = cercaFoiProcessadaLogisticamente(locaisCadastrados[b]) ? 0 : 1;
+                if (pa !== pb) return pa - pb;
+                return locaisCadastrados[a].nome.localeCompare(locaisCadastrados[b].nome);
+            });
+
+            badge.innerText = idsRelevantes.length;
+
+            if (!idsRelevantes.length) {
+                vazio.style.display = 'block';
+                lista.style.display = 'none';
+                return;
+            }
+            vazio.style.display = 'none';
+            lista.style.display = 'flex';
+
+            idsRelevantes.forEach(function(id) {
+                var local = locaisCadastrados[id];
+                var cor = obterCorPorTipo(local.tipoCerca);
+                var emoji = obterEmojiPorTipo(local.tipoCerca);
+                var processada = cercaFoiProcessadaLogisticamente(local);
+                var nomeCurto = local.nome.length > 24 ? local.nome.substring(0, 23) + '…' : local.nome;
+
+                var li = document.createElement('li');
+                li.id = 'cerca-menu-item-' + id;
+                li.className = 'cerca-menu-item' + (processada ? ' processada' : '');
+                li.style.setProperty('--cor', cor);
+                li.title = local.nome + (processada ? ' — ✅ com operações calculadas' : ' — ainda sem operações calculadas');
+                li.innerHTML = `
+                    <span class="cerca-menu-dot"></span>
+                    <span class="cerca-menu-emoji">${emoji}</span>
+                    <span class="cerca-menu-nome">${nomeCurto}</span>
+                    ${processada ? '<span class="cerca-menu-check">✅</span>' : ''}
+                `;
+                li.onclick = function() { focarCercaNoMapa(id); };
+                lista.appendChild(li);
+            });
+        }
+
         function limparPlanilhaTelemetria() {
             dadosPlanilhaBrutos = null;
             arrayPontosPlotados = [];
             limparResultadosLogica();
+            limparPinosDoMenuCercas(true);
             camadaPontosPlanilha.clearLayers();
             camadaLinhasTrajeto.clearLayers();
             document.getElementById('xlsx-file-input').value = "";
@@ -603,6 +850,7 @@
             
             atualizarBadgesEContadoresTotais();
             renderizarHistoricoNaAba();
+            renderizarMarcadoresDeAcessoCercas();
 
             Object.keys(locaisCadastrados).forEach(id => {
                 var local = locaisCadastrados[id];
@@ -683,6 +931,7 @@
             };
 
             atualizarListaLocais(); 
+            renderizarMarcadoresDeAcessoCercas();
             mudarModoDesenho('NAO_SELECIONADO');
         }
 
@@ -768,11 +1017,15 @@
             local.coordenadasOriginais = JSON.parse(JSON.stringify(arrayCoordenadasFormatoPuro));
             local.geo = { coordenadas: JSON.parse(JSON.stringify(arrayCoordenadasFormatoPuro)) };
             
+            renderizarMarcadoresDeAcessoCercas();
             logDebug(`Ajuste do perímetro "${local.nome}" salvo na memória. Lembre-se de salvar na nuvem.`);
         });
 
         marcadoresDeReajuste.push(marcadorHandle);
     });
+
+    // Traz para o menu fixo o par de cercas (azul+verde) deste mesmo local físico
+    destacarClusterNoMenuFixo(id);
 }
 
         function limparMarcadoresReajuste() {
@@ -793,6 +1046,7 @@
                 var emoji = obterEmojiPorTipo(local.tipoCerca);
                 local.layer.bindPopup(`<b>${emoji} ${local.nome}</b>`); 
                 atualizarListaLocais();
+                renderizarMarcadoresDeAcessoCercas();
             }
         }
 
@@ -802,7 +1056,8 @@
             local.geo.coordenadas = JSON.parse(JSON.stringify(local.coordenadasOriginais));
             var ptsFormatados = local.geo.coordenadas.map(p => L.latLng(p[0], p[1]));
             local.layer.setLatLngs(ptsFormatados);
-            ativarReajusteDePontos(id);
+            activarReajusteDePontos(id);
+            renderizarMarcadoresDeAcessoCercas();
         }
 
         function deletarCercaIsolada(id) {
@@ -810,6 +1065,7 @@
                 if (cercaSendoEditadaId === id) limparMarcadoresReajuste();
                 camadaDesenhos.removeLayer(locaisCadastrados[id].layer);
                 delete locaisCadastrados[id]; atualizarListaLocais();
+                renderizarMarcadoresDeAcessoCercas();
             }
         }
 
@@ -1036,6 +1292,8 @@ function aplicarFiltroPeriodo() {
     document.getElementById('datahora-fim').value =
         formatarDatetimeLocal(ultimaData);
 
+    menuCercasEscondidoManualmente = false;
+    renderizarMarcadoresDeAcessoCercas();
     logDebug(`Pontos plotados.`);
 }
         }
@@ -1254,6 +1512,8 @@ function aplicarFiltroPeriodo() {
     else if (relatoriosCalculados.cliente.length) alternarAbaResultados('cliente');
     else renderizarHistoricoNaAba();
 
+    menuCercasEscondidoManualmente = false;
+    renderizarMarcadoresDeAcessoCercas();
     logDebug("Logística de cercas processada!");
 }
 
@@ -1517,6 +1777,7 @@ function aplicarFiltroPeriodo() {
                         };
                     });
                     atualizarListaLocais(); 
+                    renderizarMarcadoresDeAcessoCercas();
             logDebug("Base de cercas digitais importada com sucesso.");
         } catch(err) { logDebug("Erro na importação: " + err.message, true); }
     };
@@ -1828,6 +2089,9 @@ if (tipoDaCerca) {
             if (typeof atualizarListaLocais === "function") {
                 atualizarListaLocais();
             }
+            if (typeof renderizarMarcadoresDeAcessoCercas === "function") {
+                renderizarMarcadoresDeAcessoCercas();
+            }
         }
     } catch (err) {
         console.error("Erro ao processar dados carregados:", err);
@@ -1867,6 +2131,9 @@ function removerCerca(id) {
             // 3. Atualiza as listagens visuais da barra lateral
             if (typeof atualizarListaLocais === "function") {
                 atualizarListaLocais();
+            }
+            if (typeof renderizarMarcadoresDeAcessoCercas === "function") {
+                renderizarMarcadoresDeAcessoCercas();
             }
             
             logDebug("Cerca removida localmente. Clique no botão de Salvar para aplicar as mudanças na Nuvem.");
