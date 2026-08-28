@@ -185,7 +185,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24
+            🗺️ Analisador Logístico de Cercas virtuais v24.1
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -1122,6 +1122,9 @@
         }
 
         function carregarExcelBruto(file) {
+            // Evita "sujeira" do arquivo anterior: limpa telemetria antes de processar o novo
+            limparPlanilhaTelemetria();
+
             var reader = new FileReader();
             reader.onload = function(e) {
                 try {
@@ -1467,18 +1470,17 @@ function aplicarFiltroPeriodo() {
             }
 
             if (emProcessoDeDescarga && pontoEntradaValidada && pontoUltimoDetectado) {
-                var duracaoTotalCerca = (pontoUltimoDetectado.date.getTime() - pontoEntradaValidada.date.getTime()) / 60000;
-                if (duracaoTotalCerca >= tempoMinDescarga) {
-                    var dadoDescarga = {
-                        localNome: local.nome,
-                        inicio: formatarDataBr(pontoEntradaValidada.date),
-                        fim: formatarDataBr(pontoUltimoDetectado.date),
-                        duracao: Math.round(duracaoTotalCerca),
-                        layerObjeto: local.layer
-                    };
-                    relatoriosCalculados.descarga.push(dadoDescarga);
-                    descargasDesteLocal.push(dadoDescarga);
-                }
+                var duracaoAteAgora = Math.round((pontoUltimoDetectado.date.getTime() - pontoEntradaValidada.date.getTime()) / 60000);
+                var dadoDescargaPendente = {
+                    localNome: local.nome,
+                    inicio: formatarDataBr(pontoEntradaValidada.date),
+                    fim: "Aguardando carga/descarga",
+                    duracao: duracaoAteAgora,
+                    pendente: true,
+                    layerObjeto: local.layer
+                };
+                relatoriosCalculados.descarga.push(dadoDescargaPendente);
+                descargasDesteLocal.push(dadoDescargaPendente);
             }
 
             if (descargasDesteLocal.length > 0) {
@@ -1488,11 +1490,14 @@ function aplicarFiltroPeriodo() {
                         <b>Local:</b> ${local.nome}<br>
                 `;
                 descargasDesteLocal.forEach((d, idx) => {
+                    var textoSaidaDescarga = d.pendente
+                        ? `<span style="color:var(--accent-warning); font-weight:bold;">Aguardando carga/descarga</span>`
+                        : `<a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.fim}</a>`;
                     htmlPopupDescargas += `
                         <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
-                            <b>Operação #${idx + 1} (${d.duracao} min):</b><br>
+                            <b>Operação #${idx + 1} (${d.duracao} min${d.pendente ? ' até agora' : ''}):</b><br>
                             📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.inicio}</a><br>
-                            📤 Saída Cerca: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.fim}</a>
+                            📤 Saída Cerca: ${textoSaidaDescarga}
                         </div>
                     `;
                 });
@@ -1667,11 +1672,15 @@ function aplicarFiltroPeriodo() {
         if (abaAtivaResultados === 'descarga') {
             item.className = "log-item descarga";
             item.onclick = function() { indicesNavegacao.descarga = idx; map.fitBounds(ev.layerObjeto.getBounds()); ev.layerObjeto.openPopup(); };
-            
+
+            var htmlSaidaDescarga = ev.pendente
+                ? `<span style="color:#f59e0b; font-weight:bold;">Aguardando carga/descarga</span>`
+                : `<a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${ev.fim}</a>`;
+
             item.innerHTML = `<div><b>🟦 ${ev.localNome} (#${idx+1})</b></div>
-                              <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Permanência: <b>${ev.duracao} min</b><br>
+                              <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Permanência: <b>${ev.duracao} min${ev.pendente ? ' até agora' : ''}</b><br>
                               📥 Entrada: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${ev.inicio}</a><br>
-                              📤 Saída: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${ev.fim}</a></div>`;
+                              📤 Saída: ${htmlSaidaDescarga}</div>`;
         } 
         else if (abaAtivaResultados === 'cliente') {
             item.className = "log-item cliente";
@@ -1738,7 +1747,7 @@ function aplicarFiltroPeriodo() {
             });
             if (!arrayExportacao.length) return alert("Sem cercas para exportar.");
             var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
-            var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'cercas_logistica_v21.json'; a.click();
+            var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'cercas_logistica_v24.1.json'; a.click();
         }
 
         function importarBaseJSON(input) {
