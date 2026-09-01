@@ -185,7 +185,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.1
+            🗺️ Analisador Logístico de Cercas virtuais v24.2
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -1734,21 +1734,35 @@ function aplicarFiltroPeriodo() {
         }
 
         function exportarBaseJSON() {
-            var arrayExportacao = [];
-            Object.keys(locaisCadastrados).forEach(id => {
-                var local = locaisCadastrados[id];
-                arrayExportacao.push({
-                    nome: local.nome,
-                    type: local.type, 
-                    tipoCerca: local.tipoCerca || "DESCARGA", 
-                    coordenadasOriginais: local.coordenadasOriginais,
-                    geo: local.geo
-                });
-            });
-            if (!arrayExportacao.length) return alert("Sem cercas para exportar.");
-            var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
-            var a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'cercas_logistica_v24.1.json'; a.click();
-        }
+    var arrayExportacao = [];
+    Object.keys(locaisCadastrados).forEach(id => {
+        var local = locaisCadastrados[id];
+        arrayExportacao.push({
+            nome: local.nome,
+            type: local.type, 
+            tipoCerca: local.tipoCerca || "DESCARGA", 
+            coordenadasOriginais: local.coordenadasOriginais,
+            geo: local.geo
+        });
+    });
+
+    var totalRegistros = arrayExportacao.length;
+
+    if (!totalRegistros) return alert("Sem cercas para exportar.");
+
+    // Gera e baixa o arquivo JSON
+    var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
+    var a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `cercas_logistica_v24.2_${totalRegistros}_registros.json`;
+    a.click();
+
+    // Notificacao com a contagem exata
+    alert(`Exportação concluída com sucesso!\nTotal de registros cadastrados: ${totalRegistros}`);
+    if (typeof logDebug === 'function') {
+        logDebug(`Base de cercas exportada com ${totalRegistros} registros.`);
+    }
+}
 
         function importarBaseJSON(input) {
             var file = input.files[0]; if (!file) return;
