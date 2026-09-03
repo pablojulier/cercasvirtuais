@@ -185,7 +185,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.2
+            🗺️ Analisador Logístico de Cercas virtuais v24.3
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -262,7 +262,7 @@
             <div class="sidebar-content">
                 <div class="section">
                     <h2>1. Carregar Planilha (.XLSX)</h2>
-                    <input type="file" id="xlsx-file-input" accept=".xlsx, .xls" style="margin-bottom: 6px; width: 100%; font-size:0.8rem;">
+                    <input type="file" id="xlsx-file-input" accept=".xlsx, .xls, .csv" style="margin-bottom: 6px; width: 100%; font-size:0.8rem;">
                     <div id="drop-zone" class="drop-zone">
                         <strong>Arraste o arquivo de telemetria aqui</strong>
                     </div>
@@ -550,6 +550,70 @@
             return new Date(NaN);
         }
 
+        // Verifica se 'prefixo' aparece no INÍCIO de uma palavra dentro de cLow
+        // (evita falsos positivos como "Nível" casando com "vel")
+        function colunaComecaCom(cLow, prefixo) {
+            var idx = cLow.indexOf(prefixo);
+            if (idx === -1) return false;
+            if (idx === 0) return true;
+            var charAntes = cLow.charAt(idx - 1);
+            return !/[a-zà-ÿ]/i.test(charAntes);
+        }
+
+        // Converte diferentes formatos de coordenada para decimal:
+        // - Decimal padrão com ponto: -23.7293 (ex: Grid)
+        // - Decimal com vírgula: -27,6858 (ex: RelatAnalitico)
+        // - Graus/Minutos/Segundos com hemisfério: 15° 43' 18'' Sul (ex: ExportedReport/UDG3I28.csv)
+        function converterCoordenadaParaDecimal(valor) {
+            if (valor === null || valor === undefined || valor === "") return NaN;
+            if (typeof valor === 'number') return valor;
+
+            var str = String(valor).trim();
+
+            var dms = str.match(/(-?\d+(?:[.,]\d+)?)\s*°\s*(\d+(?:[.,]\d+)?)\s*'\s*(\d+(?:[.,]\d+)?)\s*''?\s*([A-Za-zÀ-ÿ]+)/);
+            if (dms) {
+                var graus = parseFloat(dms[1].replace(',', '.'));
+                var minutos = parseFloat(dms[2].replace(',', '.'));
+                var segundos = parseFloat(dms[3].replace(',', '.'));
+                var hemisferio = dms[4].trim().toLowerCase();
+                var decimal = Math.abs(graus) + (minutos / 60) + (segundos / 3600);
+                if (hemisferio.indexOf('s') === 0 || hemisferio.indexOf('o') === 0 || hemisferio.indexOf('w') === 0) decimal = -decimal;
+                return decimal;
+            }
+
+            if (/^-?\d+,\d+$/.test(str)) {
+                return parseFloat(str.replace(',', '.'));
+            }
+
+            return parseFloat(str);
+        }
+
+        // Obtém o valor de Data/Hora de uma linha, combinando colunas separadas
+        // (ex: planilhas que trazem "Data" e "Hora" em colunas distintas) quando aplicável.
+        // Se não houver separação real, mantém o comportamento original (linha[colunasDetectadas.time]).
+        function obterDataHoraBruta(linha) {
+            var temColunasSeparadas = colunasDetectadas.dataCol && colunasDetectadas.horaCol && colunasDetectadas.dataCol !== colunasDetectadas.horaCol;
+            if (temColunasSeparadas) {
+                var valData = linha[colunasDetectadas.dataCol];
+                var valHora = linha[colunasDetectadas.horaCol];
+
+                var dataEhData = valData instanceof Date && !isNaN(valData.getTime());
+                var horaEhData = valHora instanceof Date && !isNaN(valHora.getTime());
+
+                if (dataEhData && horaEhData) {
+                    if (valData.getTime() === valHora.getTime()) return valData;
+                    return new Date(valData.getFullYear(), valData.getMonth(), valData.getDate(),
+                        valHora.getHours(), valHora.getMinutes(), valHora.getSeconds());
+                }
+
+                if (valData !== "" && valHora !== "") {
+                    return String(valData).trim() + " " + String(valHora).trim();
+                }
+            }
+
+            return linha[colunasDetectadas.time];
+        }
+
         var map, camadaDesenhos;
         var camadaPontosPlanilha = L.layerGroup();
         var camadaLinhasTrajeto = L.layerGroup(); 
@@ -561,7 +625,7 @@
         var camadaGoogleRuas, camadaGoogleSatelite;
         var modoSateliteAtivo = false;
         var visibilidadePolylineAtiva = true;
-        var colunasDetectadas = { lat: null, lon: null, vel: null, time: null, porta: null };
+        var colunasDetectadas = { lat: null, lon: null, vel: null, time: null, porta: null, dataCol: null, horaCol: null };
 
         var modoAtual = "NAO_SELECIONADO"; 
         var cliquesRetangulo = [];
@@ -688,9 +752,9 @@
 
                 var pontos = [];
                 dadosPlanilhaBrutos.forEach(function(linha) {
-                    var lat = parseFloat(linha[cLat]);
-                    var lon = parseFloat(linha[cLon]);
-                    var date = mapDataValida(linha[cTime]);
+                    var lat = converterCoordenadaParaDecimal(linha[cLat]);
+                    var lon = converterCoordenadaParaDecimal(linha[cLon]);
+                    var date = mapDataValida(obterDataHoraBruta(linha));
                     if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime())) {
                         pontos.push({ lat: lat, lon: lon, date: date });
                     }
@@ -1185,7 +1249,7 @@ function aplicarFiltroPeriodo() {
 
     dadosPlanilhaBrutos = dadosPlanilhaBrutos.filter(linha => {
 
-        var dataLinha = mapDataValida(linha[cTime]);
+        var dataLinha = mapDataValida(obterDataHoraBruta(linha));
 
         return dataLinha >= inicio && dataLinha <= fim;
     });
@@ -1198,14 +1262,20 @@ function aplicarFiltroPeriodo() {
             document.getElementById('file-info').innerText = `📊 ${nome} (${count} pontos)`;
             document.getElementById('file-info').style.display = 'block';
             colunasDetectadas.porta = null;
+            colunasDetectadas.dataCol = null;
+            colunasDetectadas.horaCol = null;
 
             headers.forEach(h => {
                 let low = h.toLowerCase().trim();
                 if(low.includes('lat')) colunasDetectadas.lat = h;
                 if(low.includes('lon') || low.includes('long')) colunasDetectadas.lon = h;
-                if(low.includes('vel') || low.includes('speed') || low.includes('km')) colunasDetectadas.vel = h;
+                if(colunaComecaCom(low, 'vel') || colunaComecaCom(low, 'speed') || colunaComecaCom(low, 'km')) colunasDetectadas.vel = h;
                 if(low.includes('dat') || low.includes('hor') || low.includes('tim')) colunasDetectadas.time = h;
                 if(low.includes('porta') || low.includes('bau') || low.includes('sensor') || low.includes('status')) colunasDetectadas.porta = h;
+
+                // Detecta planilhas que separam Data e Hora em colunas distintas (ex: RelatAnalitico)
+                if((low.includes('dat')) && !low.includes('hor') && !low.includes('tim')) colunasDetectadas.dataCol = h;
+                if((low.includes('hor') || low.includes('tim')) && !low.includes('dat')) colunasDetectadas.horaCol = h;
             });
 
             if(!colunasDetectadas.lat) colunasDetectadas.lat = headers[0];
@@ -1238,8 +1308,8 @@ function aplicarFiltroPeriodo() {
 
             var pontosOrdenados = [];
             dadosPlanilhaBrutos.forEach((linha, idx) => {
-                var lat = parseFloat(linha[cLat]); var lon = parseFloat(linha[cLon]);
-                var vel = parseFloat(linha[cVel]); var dataHora = mapDataValida(linha[cTime]);
+                var lat = converterCoordenadaParaDecimal(linha[cLat]); var lon = converterCoordenadaParaDecimal(linha[cLon]);
+                var vel = parseFloat(linha[cVel]); var dataHora = mapDataValida(obterDataHoraBruta(linha));
 
                 if (!isNaN(lat) && !isNaN(lon) && !isNaN(dataHora.getTime())) {
                     pontosOrdenados.push({ lat: lat, lon: lon, vel: vel, dataHora: dataHora, idOriginal: idx + 1 });
@@ -1339,9 +1409,9 @@ function aplicarFiltroPeriodo() {
 
     var pontosCronologicos = [];
     dadosPlanilhaBrutos.forEach(linha => {
-        var lat = parseFloat(linha[cLat]); 
-        var lon = parseFloat(linha[cLon]); 
-        var date = mapDataValida(linha[cTime]);
+        var lat = converterCoordenadaParaDecimal(linha[cLat]); 
+        var lon = converterCoordenadaParaDecimal(linha[cLon]); 
+        var date = mapDataValida(obterDataHoraBruta(linha));
         var vel = parseFloat(linha[cVel]);
         if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime())) {
             pontosCronologicos.push({ lat: lat, lon: lon, date: date, vel: isNaN(vel) ? 0 : vel });
@@ -1540,7 +1610,7 @@ function aplicarFiltroPeriodo() {
 
             var pontosCronologicos = [];
             dadosPlanilhaBrutos.forEach((linha, idx) => {
-                var lat = parseFloat(linha[cLat]); var lon = parseFloat(linha[cLon]); var date = mapDataValida(linha[cTime]);
+                var lat = converterCoordenadaParaDecimal(linha[cLat]); var lon = converterCoordenadaParaDecimal(linha[cLon]); var date = mapDataValida(obterDataHoraBruta(linha));
                 if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime())) {
                     pontosCronologicos.push({ lat: lat, lon: lon, date: date, id: idx + 1 });
                 }
@@ -1754,7 +1824,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.2_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.3_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
@@ -2366,13 +2436,13 @@ function focarPontoPorDataEHora(textoDataHora) {
 
     // Procura o ponto na planilha cuja data formatada corresponda exatamente ao texto clicado
     var pontoEncontrado = dadosPlanilhaBrutos.find(function(linha) {
-        var dataHoraObj = mapDataValida(linha[cTime]);
+        var dataHoraObj = mapDataValida(obterDataHoraBruta(linha));
         return formatarDataBr(dataHoraObj) === textoDataHora;
     });
 
     if (pontoEncontrado) {
-        var lat = parseFloat(pontoEncontrado[cLat]);
-        var lon = parseFloat(pontoEncontrado[cLon]);
+        var lat = converterCoordenadaParaDecimal(pontoEncontrado[cLat]);
+        var lon = converterCoordenadaParaDecimal(pontoEncontrado[cLon]);
 
         if (!isNaN(lat) && !isNaN(lon)) {
             // Ajusta a visão do mapa para as coordenadas encontradas e aplica zoom detalhado
