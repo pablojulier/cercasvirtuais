@@ -185,7 +185,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.3
+            🗺️ Analisador Logístico de Cercas virtuais v24.4
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -1185,6 +1185,24 @@
             document.getElementById('count-total-cercas-badge').innerText = chaves.length;
         }
 
+        // Detecta dinamicamente em qual linha física está o cabeçalho real da planilha,
+        // pulando eventuais linhas de título/observação acima dele (ex: "Relatório de Posições").
+        // Retorna o índice (0-based) da linha que mais se parece com um cabeçalho de dados.
+        function detectarLinhaCabecalho(ws) {
+            var previa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: "", blankrows: false });
+            var palavrasChave = ['lat', 'lon', 'veloc', 'speed', 'dat', 'hor', 'cid', 'placa', 'veic', 'refer', 'km'];
+            for (var i = 0; i < Math.min(previa.length, 15); i++) {
+                var linha = previa[i];
+                var matches = 0;
+                linha.forEach(function(cel) {
+                    var low = String(cel).toLowerCase();
+                    palavrasChave.forEach(function(p) { if (low.includes(p)) matches++; });
+                });
+                if (matches >= 2) return i;
+            }
+            return 0;
+        }
+
         function carregarExcelBruto(file) {
             // Evita "sujeira" do arquivo anterior: limpa telemetria antes de processar o novo
             limparPlanilhaTelemetria();
@@ -1194,7 +1212,9 @@
                 try {
                     var data = new Uint8Array(e.target.result);
                     var workbook = XLSX.read(data, {type: 'array', cellDates: true});
-                    dadosPlanilhaBrutos = XLSX.utils.sheet_to_json(workbook.Sheets[workbook.SheetNames[0]], {defval: ""});
+                    var planilhaAtiva = workbook.Sheets[workbook.SheetNames[0]];
+                    var linhaCabecalho = detectarLinhaCabecalho(planilhaAtiva);
+                    dadosPlanilhaBrutos = XLSX.utils.sheet_to_json(planilhaAtiva, {defval: "", range: linhaCabecalho});
                     if(!dadosPlanilhaBrutos.length) throw new Error("Planilha sem registros lógicos.");
                     mapearEPlotarAutomatico(Object.keys(dadosPlanilhaBrutos[0]), file.name, dadosPlanilhaBrutos.length);
                 } catch(err) { logDebug("Erro: " + err.message, true); }
@@ -1394,6 +1414,25 @@ function aplicarFiltroPeriodo() {
             return minDist;
         }
 
+        // Formata uma duração em minutos de forma amigável:
+        // até 60 min → "45 min"; acima disso → combina dias/horas/minutos (ex: "1d 3h 20min")
+        function formatarDuracaoAmigavel(minutosTotais) {
+            minutosTotais = Math.round(minutosTotais || 0);
+            if (minutosTotais < 60) {
+                return `${minutosTotais} min`;
+            }
+            var dias = Math.floor(minutosTotais / 1440);
+            var restoAposDias = minutosTotais % 1440;
+            var horas = Math.floor(restoAposDias / 60);
+            var minutos = restoAposDias % 60;
+
+            var partes = [];
+            if (dias > 0) partes.push(`${dias}d`);
+            if (horas > 0) partes.push(`${horas}h`);
+            if (minutos > 0) partes.push(`${minutos}min`);
+            return partes.join(' ');
+        }
+
         function analisarDadosDasCercas() {
     limparMarcadoresReajuste();
     relatoriosCalculados.descarga = [];
@@ -1450,6 +1489,7 @@ function aplicarFiltroPeriodo() {
                             localNome: local.nome,
                             inicio: formatarDataBr(confirmadoEntrada.date),
                             fim: formatarDataBr(p.date),
+                            duracaoMin: Math.round((p.date.getTime() - confirmadoEntrada.date.getTime()) / 60000),
                             layerObjeto: local.layer
                         };
                         visitasDesteLocal.push(dadoVisita);
@@ -1467,6 +1507,8 @@ function aplicarFiltroPeriodo() {
                     localNome: local.nome,
                     inicio: formatarDataBr(confirmadoEntrada.date),
                     fim: "Aguardando no cliente",
+                    duracaoMin: Math.round((pontosCronologicos[pontosCronologicos.length - 1].date.getTime() - confirmadoEntrada.date.getTime()) / 60000),
+                    pendente: true,
                     layerObjeto: local.layer
                 };
                 visitasDesteLocal.push(dadoPendente);
@@ -1486,7 +1528,7 @@ function aplicarFiltroPeriodo() {
 
                     htmlPopupClientes += `
                         <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
-                            <b>Operação #${idx + 1}:</b><br>
+                            <b>Operação #${idx + 1} (${formatarDuracaoAmigavel(v.duracaoMin)}${v.pendente ? ' até agora' : ''}):</b><br>
                             📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${v.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${v.inicio}</a><br>
                             📤 Saída: ${textoSaida}
                         </div>
@@ -1824,7 +1866,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.3_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.2_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
