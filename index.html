@@ -185,7 +185,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.4
+            🗺️ Analisador Logístico de Cercas virtuais v24.5
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -1607,7 +1607,7 @@ function aplicarFiltroPeriodo() {
                         : `<a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.fim}</a>`;
                     htmlPopupDescargas += `
                         <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
-                            <b>Operação #${idx + 1} (${d.duracao} min${d.pendente ? ' até agora' : ''}):</b><br>
+                            <b>Operação #${idx + 1} (${formatarDuracaoAmigavel(d.duracao)}${d.pendente ? ' até agora' : ''}):</b><br>
                             📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.inicio}</a><br>
                             📤 Saída Cerca: ${textoSaidaDescarga}
                         </div>
