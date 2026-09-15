@@ -185,7 +185,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.5
+            🗺️ Analisador Logístico de Cercas virtuais v24.7
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -635,6 +635,7 @@
         var marcadoresDeReajuste = [];
 
         var relatoriosCalculados = { descarga: [], cliente: [], proibida: [], parada: [] };
+        var analiseCercasAtualizada = false;
         var indicesNavegacao = { descarga: -1, cliente: -1, proibida: -1, parada: -1 };
         var abaAtivaResultados = "descarga";
 
@@ -906,6 +907,7 @@
             camadaEventosDinamicos.clearLayers();
             relatoriosCalculados = { descarga: [], cliente: [], proibida: [], parada: [] };
             indicesNavegacao = { descarga: -1, cliente: -1, proibida: -1, parada: -1 };
+            analiseCercasAtualizada = false;
             
             document.getElementById('btn-nav-descarga').style.display = "none";
             document.getElementById('btn-nav-cliente').style.display = "none";
@@ -928,12 +930,76 @@
                 alert("Nenhuma telemetria carregada no mapa para identificar a última posição.");
                 return;
             }
+
+            // Garante que a Logística de Cercas já foi processada, para que a distância
+            // até a última Cerca de Cliente esteja sempre disponível, independente da ordem de cliques.
+            if (!analiseCercasAtualizada && Object.keys(locaisCadastrados).length && dadosPlanilhaBrutos) {
+                analisarDadosDasCercas();
+            }
+
             var ultimoMarcador = arrayPontosPlotados[arrayPontosPlotados.length - 1];
             var coordenadas = ultimoMarcador.getLatLng();
-            
+
+            // Remove o botão "Criar Cerca 60m Aqui" apenas do popup da última posição, para deixar mais limpo.
+            if (ultimoMarcador.getPopup()) {
+                var conteudoBase = ultimoMarcador.getPopup().getContent();
+                conteudoBase = conteudoBase.replace(/<br><br><button[^>]*onclick='gerarCercaRaioPoligono60m\(L\.latLng\([^)]*\)\)'>⚡ Criar Cerca 60m Aqui<\/button>/, '');
+                ultimoMarcador.setPopupContent(conteudoBase);
+            }
+
+            var textoInfoExtra = "";
+            var dataUltimaPosicao = ultimoMarcador.dataHoraPonto;
+
+            if (dataUltimaPosicao instanceof Date && !isNaN(dataUltimaPosicao.getTime())) {
+                var ultimaCercaCliente = obterUltimaCercaClienteAntesDe(dataUltimaPosicao);
+                if (ultimaCercaCliente && ultimaCercaCliente.verticesCerca) {
+                    var distanciaMetros = calcularDistanciaMinimaPerimetro(coordenadas.lat, coordenadas.lng, ultimaCercaCliente.verticesCerca);
+                    textoInfoExtra += `<br>🟩 Distância da última Cerca de Cliente (${ultimaCercaCliente.localNome}): <b>${formatarDistanciaAmigavel(distanciaMetros)}</b>`;
+                    logDebug(`Focado na última posição. Distância até a última Cerca de Cliente (${ultimaCercaCliente.localNome}): ${formatarDistanciaAmigavel(distanciaMetros)}`);
+                } else {
+                    textoInfoExtra += `<br>🟩 Sem registro de Cerca de Cliente anterior a esta posição.`;
+                    logDebug(`Focado na última posição da rota: Lat ${coordenadas.lat.toFixed(5)}, Lon ${coordenadas.lng.toFixed(5)}. Sem registro de Cerca de Cliente anterior.`);
+                }
+            } else {
+                logDebug(`Focado na última posição da rota: Lat ${coordenadas.lat.toFixed(5)}, Lon ${coordenadas.lng.toFixed(5)}`);
+            }
+
+            // Se o veículo está parado (vel=0) na última posição, informa há quanto tempo ele permanece
+            // dentro do raio de parada configurado (mesmo raio usado em "Identificar Paradas").
+            if (ultimoMarcador.velocidadePonto === 0 && dataUltimaPosicao instanceof Date && !isNaN(dataUltimaPosicao.getTime())) {
+                var raioMaxMetros = parseFloat(document.getElementById('input-raio-parada').value) || 200;
+                var grupoParadaAtual = [ultimoMarcador];
+                for (var k = arrayPontosPlotados.length - 2; k >= 0; k--) {
+                    var candidato = arrayPontosPlotados[k];
+                    var distanciaEntrePontos = coordenadas.distanceTo(candidato.getLatLng());
+                    if (distanciaEntrePontos <= raioMaxMetros) {
+                        grupoParadaAtual.push(candidato);
+                    } else {
+                        break;
+                    }
+                }
+                if (grupoParadaAtual.length >= 2) {
+                    var pontoMaisAntigoDoGrupo = grupoParadaAtual[grupoParadaAtual.length - 1];
+                    var dataInicioParada = pontoMaisAntigoDoGrupo.dataHoraPonto;
+                    if (dataInicioParada instanceof Date && !isNaN(dataInicioParada.getTime())) {
+                        var minutosParado = Math.round((dataUltimaPosicao.getTime() - dataInicioParada.getTime()) / 60000);
+                        textoInfoExtra += `<br>⏱️ Parado neste local há: <b>${formatarDuracaoAmigavel(minutosParado)}</b> (raio de ${raioMaxMetros}m)`;
+                        logDebug(`Veículo parado há ${formatarDuracaoAmigavel(minutosParado)} na última posição (raio de ${raioMaxMetros}m).`);
+                    }
+                }
+            }
+
+            if (textoInfoExtra && ultimoMarcador.getPopup()) {
+                var conteudoAtual = ultimoMarcador.getPopup().getContent();
+                if (conteudoAtual.indexOf("Distância da última Cerca de Cliente") === -1 &&
+                    conteudoAtual.indexOf("Sem registro de Cerca de Cliente") === -1 &&
+                    conteudoAtual.indexOf("Parado neste local há") === -1) {
+                    ultimoMarcador.setPopupContent(conteudoAtual + textoInfoExtra);
+                }
+            }
+
             map.setView(coordenadas, 16);
             ultimoMarcador.openPopup();
-            logDebug(`Focado na última posição da rota: Lat ${coordenadas.lat.toFixed(5)}, Lon ${coordenadas.lng.toFixed(5)}`);
         }
 
         function mudarModoDesenho(novoModo) {
@@ -1350,6 +1416,8 @@ function aplicarFiltroPeriodo() {
                 var corBolinha = (ponto.vel === 0 || isNaN(ponto.vel)) ? "#eab308" : "#22c55e"; 
 
                 var circulo = L.circleMarker(latlng, { radius: 6, fillColor: corBolinha, color: "#000", weight: 1, fillOpacity: 0.95 });
+                circulo.dataHoraPonto = ponto.dataHora;
+                circulo.velocidadePonto = isNaN(ponto.vel) ? 0 : ponto.vel;
                 var htmlPopup = `<b>📍 Ponto #${ponto.idOriginal}</b><br>⏱️ ${dataFormatada}<br>⚡ Velocidade: ${isNaN(ponto.vel)?0:ponto.vel} km/h<br><br><button style='padding:4px 6px; font-size:0.75rem; background:#16a34a;' onclick='gerarCercaRaioPoligono60m(L.latLng(${ponto.lat}, ${ponto.lon}))'>⚡ Criar Cerca 60m Aqui</button>`;
                 circulo.bindPopup(htmlPopup);
                 camadaPontosPlanilha.addLayer(circulo);
@@ -1412,6 +1480,25 @@ function aplicarFiltroPeriodo() {
                 if (d < minDist) minDist = d;
             }
             return minDist;
+        }
+
+        // Formata uma distância em metros de forma amigável: "850 m" ou "3.42 km"
+        function formatarDistanciaAmigavel(metros) {
+            if (metros === null || metros === undefined || isNaN(metros)) return "N/D";
+            if (metros < 1000) return `${Math.round(metros)} m`;
+            return `${(metros / 1000).toFixed(2)} km`;
+        }
+
+        // Busca, dentre os registros de Cerca de Cliente (verde) já calculados, o mais recente
+        // cujo encerramento (fimDate) seja anterior ou igual à data de referência informada.
+        function obterUltimaCercaClienteAntesDe(dataReferencia) {
+            var candidatos = (relatoriosCalculados.cliente || []).filter(function(r) {
+                return r.fimDate instanceof Date && !isNaN(r.fimDate.getTime()) && r.fimDate.getTime() <= dataReferencia.getTime();
+            });
+            if (!candidatos.length) return null;
+            return candidatos.reduce(function(maisRecente, atual) {
+                return (atual.fimDate.getTime() > maisRecente.fimDate.getTime()) ? atual : maisRecente;
+            });
         }
 
         // Formata uma duração em minutos de forma amigável:
@@ -1489,7 +1576,9 @@ function aplicarFiltroPeriodo() {
                             localNome: local.nome,
                             inicio: formatarDataBr(confirmadoEntrada.date),
                             fim: formatarDataBr(p.date),
+                            fimDate: p.date,
                             duracaoMin: Math.round((p.date.getTime() - confirmadoEntrada.date.getTime()) / 60000),
+                            verticesCerca: vertices,
                             layerObjeto: local.layer
                         };
                         visitasDesteLocal.push(dadoVisita);
@@ -1507,7 +1596,9 @@ function aplicarFiltroPeriodo() {
                     localNome: local.nome,
                     inicio: formatarDataBr(confirmadoEntrada.date),
                     fim: "Aguardando no cliente",
+                    fimDate: pontosCronologicos[pontosCronologicos.length - 1].date,
                     duracaoMin: Math.round((pontosCronologicos[pontosCronologicos.length - 1].date.getTime() - confirmadoEntrada.date.getTime()) / 60000),
+                    verticesCerca: vertices,
                     pendente: true,
                     layerObjeto: local.layer
                 };
@@ -1631,6 +1722,7 @@ function aplicarFiltroPeriodo() {
 
     menuCercasEscondidoManualmente = false;
     renderizarMarcadoresDeAcessoCercas();
+    analiseCercasAtualizada = true;
     logDebug("Logística de cercas processada!");
 }
 
@@ -1866,7 +1958,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.2_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.7_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
