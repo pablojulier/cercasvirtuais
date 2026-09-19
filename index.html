@@ -185,7 +185,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.7
+            🗺️ Analisador Logístico de Cercas virtuais v24.8
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -255,7 +255,29 @@
         </div>
     </div>
 </div>
-    
+
+    <div id="trajeto-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 31000; justify-content: center; align-items: center;">
+        <div style="background: white; padding: 20px; border-radius: 8px; max-width: 560px; width: 92%; max-height: 80vh; box-shadow: 0 4px 25px rgba(0,0,0,0.3); display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">
+                <h3 style="font-size: 1.05rem; color: #0f172a;">🛣️ Trajeto Completo</h3>
+                <button onclick="fecharModalTrajeto()" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #94a3b8;">&times;</button>
+            </div>
+            <input type="text" id="trajeto-filtro" placeholder="Filtrar por local/cidade..." oninput="renderizarTabelaTrajeto()" style="padding: 7px 9px; border: 1px solid #cbd5e1; border-radius: 4px; font-size: 0.85rem;">
+            <div style="overflow-y: auto; flex: 1; border: 1px solid #f1f5f9; border-radius: 4px;">
+                <table style="width: 100%; border-collapse: collapse; font-size: 0.78rem;">
+                    <thead style="position: sticky; top: 0; background: #f1f5f9;">
+                        <tr>
+                            <th style="text-align: left; padding: 6px; border-bottom: 1px solid #e2e8f0;">Data/Hora</th>
+                            <th style="text-align: left; padding: 6px; border-bottom: 1px solid #e2e8f0;">Velocidade</th>
+                            <th style="text-align: left; padding: 6px; border-bottom: 1px solid #e2e8f0;">Local/Cidade</th>
+                        </tr>
+                    </thead>
+                    <tbody id="trajeto-tabela-corpo"></tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
     <div class="main-container">
         
         <div id="sidebar">
@@ -501,6 +523,7 @@
             <div class="layer-toggle-panel">
                 <button id="btn-toggle-layer" class="layer-btn" onclick="alternarCamadaMapa()">Satélite 🛰️</button>
                 <button id="btn-toggle-polyline" class="layer-btn" onclick="alternarVisibilidadePolyline()">Ocultar Linhas 📐</button>
+                <button id="btn-toggle-trajeto" class="layer-btn" onclick="abrirModalTrajeto()">🛣️ Trajeto</button>
             </div>
 
             <div id="map"></div>
@@ -625,7 +648,7 @@
         var camadaGoogleRuas, camadaGoogleSatelite;
         var modoSateliteAtivo = false;
         var visibilidadePolylineAtiva = true;
-        var colunasDetectadas = { lat: null, lon: null, vel: null, time: null, porta: null, dataCol: null, horaCol: null };
+        var colunasDetectadas = { lat: null, lon: null, vel: null, time: null, porta: null, dataCol: null, horaCol: null, local: null };
 
         var modoAtual = "NAO_SELECIONADO"; 
         var cliquesRetangulo = [];
@@ -923,6 +946,61 @@
                 var emoji = obterEmojiPorTipo(local.tipoCerca);
                 local.layer.bindPopup(`<b>${emoji} ${local.nome}</b>`);
             });
+        }
+
+        // Abre o modal "Trajeto" com a tabela completa de pontos (Data/Hora, Velocidade e Local/Cidade)
+        function abrirModalTrajeto() {
+            if (!arrayPontosPlotados || arrayPontosPlotados.length === 0) {
+                alert("Nenhuma telemetria carregada no mapa para exibir o trajeto.");
+                return;
+            }
+            document.getElementById('trajeto-filtro').value = "";
+            renderizarTabelaTrajeto();
+            document.getElementById('trajeto-modal').style.display = "flex";
+        }
+
+        function fecharModalTrajeto() {
+            document.getElementById('trajeto-modal').style.display = "none";
+        }
+
+        function renderizarTabelaTrajeto() {
+            var corpo = document.getElementById('trajeto-tabela-corpo');
+            corpo.innerHTML = "";
+            var filtro = (document.getElementById('trajeto-filtro').value || "").toLowerCase().trim();
+
+            arrayPontosPlotados.forEach(function(marcador, idx) {
+                var local = marcador.localPonto || "-";
+                if (filtro && local.toLowerCase().indexOf(filtro) === -1) return;
+
+                var vel = marcador.velocidadePonto;
+                var corVel = (vel === 0 || isNaN(vel)) ? "#b45309" : "#166534";
+
+                var tr = document.createElement('tr');
+                tr.style.cursor = "pointer";
+                tr.style.borderBottom = "1px solid #f1f5f9";
+                tr.onmouseover = function() { tr.style.background = "#f8fafc"; };
+                tr.onmouseout = function() { tr.style.background = ""; };
+                tr.onclick = function() { focarPontoDoTrajeto(idx); };
+                tr.innerHTML = `
+                    <td style="padding:6px;">${formatarDataBr(marcador.dataHoraPonto)}</td>
+                    <td style="padding:6px; color:${corVel}; font-weight:bold;">${isNaN(vel) ? 0 : vel} km/h</td>
+                    <td style="padding:6px;">${local}</td>
+                `;
+                corpo.appendChild(tr);
+            });
+
+            if (!corpo.children.length) {
+                corpo.innerHTML = `<tr><td colspan="3" style="padding:12px; text-align:center; color:#94a3b8;">Nenhum ponto encontrado.</td></tr>`;
+            }
+        }
+
+        // Fecha o modal, centraliza o mapa no ponto escolhido e abre seu popup
+        function focarPontoDoTrajeto(idx) {
+            var marcador = arrayPontosPlotados[idx];
+            if (!marcador) return;
+            fecharModalTrajeto();
+            map.setView(marcador.getLatLng(), 16);
+            marcador.openPopup();
         }
 
         function focarUltimaPosicao() {
@@ -1350,6 +1428,8 @@ function aplicarFiltroPeriodo() {
             colunasDetectadas.porta = null;
             colunasDetectadas.dataCol = null;
             colunasDetectadas.horaCol = null;
+            colunasDetectadas.local = null;
+            var melhorMatchLocal = 0;
 
             headers.forEach(h => {
                 let low = h.toLowerCase().trim();
@@ -1362,6 +1442,15 @@ function aplicarFiltroPeriodo() {
                 // Detecta planilhas que separam Data e Hora em colunas distintas (ex: RelatAnalitico)
                 if((low.includes('dat')) && !low.includes('hor') && !low.includes('tim')) colunasDetectadas.dataCol = h;
                 if((low.includes('hor') || low.includes('tim')) && !low.includes('dat')) colunasDetectadas.horaCol = h;
+
+                // Detecta coluna de cidade/local/referência, para exibir na tabela de trajeto
+                if(low === 'cidade' || low === 'municipio' || low === 'referencia' || low === 'referência') {
+                    colunasDetectadas.local = h; melhorMatchLocal = 3;
+                } else if((colunaComecaCom(low, 'cid') || colunaComecaCom(low, 'ref') || colunaComecaCom(low, 'mun')) && melhorMatchLocal < 2) {
+                    colunasDetectadas.local = h; melhorMatchLocal = 2;
+                } else if(colunaComecaCom(low, 'loc') && melhorMatchLocal < 1) {
+                    colunasDetectadas.local = h; melhorMatchLocal = 1;
+                }
             });
 
             if(!colunasDetectadas.lat) colunasDetectadas.lat = headers[0];
@@ -1389,6 +1478,7 @@ function aplicarFiltroPeriodo() {
             
             var cLat = colunasDetectadas.lat; var cLon = colunasDetectadas.lon;
             var cVel = colunasDetectadas.vel; var cTime = colunasDetectadas.time;
+            var cLocal = colunasDetectadas.local;
 
             if (!cLat || !cLon) return;
 
@@ -1396,9 +1486,10 @@ function aplicarFiltroPeriodo() {
             dadosPlanilhaBrutos.forEach((linha, idx) => {
                 var lat = converterCoordenadaParaDecimal(linha[cLat]); var lon = converterCoordenadaParaDecimal(linha[cLon]);
                 var vel = parseFloat(linha[cVel]); var dataHora = mapDataValida(obterDataHoraBruta(linha));
+                var local = cLocal ? String(linha[cLocal] || "").trim() : "";
 
                 if (!isNaN(lat) && !isNaN(lon) && !isNaN(dataHora.getTime())) {
-                    pontosOrdenados.push({ lat: lat, lon: lon, vel: vel, dataHora: dataHora, idOriginal: idx + 1 });
+                    pontosOrdenados.push({ lat: lat, lon: lon, vel: vel, dataHora: dataHora, idOriginal: idx + 1, local: local });
                 }
             });
 
@@ -1418,6 +1509,7 @@ function aplicarFiltroPeriodo() {
                 var circulo = L.circleMarker(latlng, { radius: 6, fillColor: corBolinha, color: "#000", weight: 1, fillOpacity: 0.95 });
                 circulo.dataHoraPonto = ponto.dataHora;
                 circulo.velocidadePonto = isNaN(ponto.vel) ? 0 : ponto.vel;
+                circulo.localPonto = ponto.local || "";
                 var htmlPopup = `<b>📍 Ponto #${ponto.idOriginal}</b><br>⏱️ ${dataFormatada}<br>⚡ Velocidade: ${isNaN(ponto.vel)?0:ponto.vel} km/h<br><br><button style='padding:4px 6px; font-size:0.75rem; background:#16a34a;' onclick='gerarCercaRaioPoligono60m(L.latLng(${ponto.lat}, ${ponto.lon}))'>⚡ Criar Cerca 60m Aqui</button>`;
                 circulo.bindPopup(htmlPopup);
                 camadaPontosPlanilha.addLayer(circulo);
@@ -1832,7 +1924,7 @@ function aplicarFiltroPeriodo() {
 
             var html = tipo === "PROIBIDA" 
                 ? `<b style="color:#ef4444;">🚨 ALERTA: PARADA EM ÁREA PROIBIDA</b><br><b>Área:</b> ${parada.localNome}<br>⏳ ${parada.duracao} min<br>📥 ${parada.inicio}<br>📤 ${parada.fim}`
-                : `<b style="color:#d97706;">⚠️ PARADA TRAJETO GERAL</b><br>⏳ Duração: ${parada.duracao} min<br>📥 ${parada.inicio}<br>📤 ${parada.fim}`;
+                : `<b style="color:#d97706;">⚠️ PARADA TRAJETO GERAL</b><br>⏳ Duração: ${formatarDuracaoAmigavel(parada.duracao)}<br>📥 ${parada.inicio}<br>📤 ${parada.fim}`;
 
             rastro.bindPopup(html); mAlerta.bindPopup(html);
             camadaEventosDinamicos.addLayer(rastro);
@@ -1958,7 +2050,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.7_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.8_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
