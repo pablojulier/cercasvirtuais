@@ -185,7 +185,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.8
+            🗺️ Analisador Logístico de Cercas virtuais v24.10 <span style="font-size:0.55em; font-weight:normal; opacity:0.75;">atualizado em 06/10/2026</span></h1>
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
            
@@ -275,6 +275,17 @@
                     <tbody id="trajeto-tabela-corpo"></tbody>
                 </table>
             </div>
+        </div>
+    </div>
+
+    <div id="timeline-modal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 31000; justify-content: center; align-items: center;">
+        <div style="background: white; padding: 20px; border-radius: 8px; max-width: 620px; width: 94%; max-height: 85vh; box-shadow: 0 4px 25px rgba(0,0,0,0.3); display: flex; flex-direction: column; gap: 10px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">
+                <h3 style="font-size: 1.05rem; color: #0f172a;">🕐 Linha do Tempo Geral</h3>
+                <button onclick="fecharModalLinhaDoTempo()" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #94a3b8;">&times;</button>
+            </div>
+            <div id="timeline-resumo-total" style="background:#f5f3ff; border:1px solid #ddd6fe; border-radius:6px; padding:8px 10px; font-size:0.8rem; color:#5b21b6; font-weight:bold;"></div>
+            <div id="timeline-corpo" style="overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px;"></div>
         </div>
     </div>
 
@@ -524,6 +535,7 @@
                 <button id="btn-toggle-layer" class="layer-btn" onclick="alternarCamadaMapa()">Satélite 🛰️</button>
                 <button id="btn-toggle-polyline" class="layer-btn" onclick="alternarVisibilidadePolyline()">Ocultar Linhas 📐</button>
                 <button id="btn-toggle-trajeto" class="layer-btn" onclick="abrirModalTrajeto()">🛣️ Trajeto</button>
+                <button id="btn-toggle-timeline" class="layer-btn" style="background:#7c3aed;" onclick="abrirModalLinhaDoTempo()">🕐 Linha do Tempo</button>
             </div>
 
             <div id="map"></div>
@@ -801,6 +813,44 @@
             } catch (e) { return false; }
         }
 
+        // Retorna a data mais antiga de atividade (primeiro ponto de telemetria) dentro de uma cerca.
+        // Prioriza os registros já calculados pelo "Processar Cercas logísticas" (mais rápido e preciso);
+        // se ainda não processado, varre a telemetria bruta como fallback.
+        function obterDataAtividadeCerca(id) {
+            var local = locaisCadastrados[id];
+            if (!local) return null;
+
+            var datasCalculadas = []
+                .concat((relatoriosCalculados.cliente || []).filter(function(r) { return r.localId === id; }))
+                .concat((relatoriosCalculados.descarga || []).filter(function(r) { return r.localId === id; }))
+                .map(function(r) { return r.inicioDate; })
+                .filter(function(d) { return d instanceof Date && !isNaN(d.getTime()); });
+
+            if (datasCalculadas.length) {
+                return new Date(Math.min.apply(null, datasCalculadas.map(function(d) { return d.getTime(); })));
+            }
+
+            try {
+                if (!dadosPlanilhaBrutos || !dadosPlanilhaBrutos.length) return null;
+                var vertices = local.geo && local.geo.coordenadas;
+                if (!vertices || vertices.length < 3) return null;
+                var cLat = colunasDetectadas.lat, cLon = colunasDetectadas.lon;
+                if (cLat == null || cLon == null) return null;
+
+                var primeiraData = null;
+                for (var i = 0; i < dadosPlanilhaBrutos.length; i++) {
+                    var linha = dadosPlanilhaBrutos[i];
+                    var lat = converterCoordenadaParaDecimal(linha[cLat]);
+                    var lon = converterCoordenadaParaDecimal(linha[cLon]);
+                    var date = mapDataValida(obterDataHoraBruta(linha));
+                    if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime()) && pontoNaCerca(lat, lon, vertices)) {
+                        if (!primeiraData || date < primeiraData) primeiraData = date;
+                    }
+                }
+                return primeiraData;
+            } catch (e) { return null; }
+        }
+
         // Verifica se a cerca já tem resultado calculado pelo "Processar Cercas logísticas"
         function cercaFoiProcessadaLogisticamente(local) {
             if (!local || !local.layer) return false;
@@ -810,17 +860,53 @@
             return achouCliente;
         }
 
-        // Retorna os ids de todas as cercas cujo centróide está a até THRESHOLD_M do centróide da cerca informada (mesmo "local físico")
+        // Verifica se a cerca "idInterno" está geometricamente contida dentro da cerca "idContainer"
+        // (regra do pátio: a área verde/Cliente é sempre maior, e a(s) área(s) azul/Descarga ficam dentro dela).
+        // Considera contida quando a MAIORIA dos vértices da cerca interna cai dentro do perímetro da
+        // externa (robusto a formas irregulares), com o centróide como fallback para geometrias sem vértices.
+        function cercaContemCerca(idContainer, idInterno) {
+            var container = locaisCadastrados[idContainer];
+            var interno = locaisCadastrados[idInterno];
+            if (!container || !interno) return false;
+
+            var verticesContainer = container.geo && container.geo.coordenadas;
+            if (!verticesContainer || verticesContainer.length < 3) return false;
+
+            var verticesInterno = interno.geo && interno.geo.coordenadas;
+            if (verticesInterno && verticesInterno.length >= 3) {
+                var dentro = 0;
+                verticesInterno.forEach(function(v) {
+                    if (pontoNaCerca(v[0], v[1], verticesContainer)) dentro++;
+                });
+                if (dentro / verticesInterno.length >= 0.5) return true;
+            }
+
+            var centroInterno = calcularCentroideCerca(interno.layer);
+            if (centroInterno && pontoNaCerca(centroInterno.lat, centroInterno.lng, verticesContainer)) return true;
+
+            return false;
+        }
+
+        // Retorna os ids de todas as cercas do mesmo "local físico" que a cerca informada: qualquer cerca
+        // geometricamente contida nela (ou que a contenha) — ex: uma ou mais áreas azuis (Descarga) dentro
+        // de uma área verde (Cliente) maior — mais, como reforço, cercas cujo centróide esteja bem próximo
+        // (fallback para desenhos manuais imprecisos que não cheguem a se sobrepor de fato).
         function obterClusterDeCercasProximas(idReferencia) {
             var local = locaisCadastrados[idReferencia]; if (!local) return [idReferencia];
-            var centro = calcularCentroideCerca(local.layer); if (!centro) return [idReferencia];
+            var centro = calcularCentroideCerca(local.layer);
             var THRESHOLD_M = 80;
             var resultado = [idReferencia];
             Object.keys(locaisCadastrados).forEach(function(outroId) {
                 if (outroId === idReferencia) return;
                 var outro = locaisCadastrados[outroId];
+
+                if (cercaContemCerca(idReferencia, outroId) || cercaContemCerca(outroId, idReferencia)) {
+                    resultado.push(outroId);
+                    return;
+                }
+
                 var centroOutro = calcularCentroideCerca(outro.layer);
-                if (centroOutro && distanciaEmMetrosEntrePontos(centro, centroOutro) <= THRESHOLD_M) {
+                if (centro && centroOutro && distanciaEmMetrosEntrePontos(centro, centroOutro) <= THRESHOLD_M) {
                     resultado.push(outroId);
                 }
             });
@@ -873,13 +959,38 @@
                 return cercaTemPontosDePosicaoDentro(local);
             });
 
-            // Ordena: processadas primeiro, depois por nome
-            idsRelevantes.sort(function(a, b) {
-                var pa = cercaFoiProcessadaLogisticamente(locaisCadastrados[a]) ? 0 : 1;
-                var pb = cercaFoiProcessadaLogisticamente(locaisCadastrados[b]) ? 0 : 1;
-                if (pa !== pb) return pa - pb;
-                return locaisCadastrados[a].nome.localeCompare(locaisCadastrados[b].nome);
+            // Ordena por DATA e REGIÃO: cercas do mesmo local físico (cluster azul+verde, até 80m)
+            // ficam sempre próximas na lista, e os clusters/cercas avulsas são ordenados pela
+            // data mais antiga de atividade (chegada mais antiga primeiro).
+            var mapaDatasAtividade = {};
+            idsRelevantes.forEach(function(id) {
+                var d = obterDataAtividadeCerca(id);
+                mapaDatasAtividade[id] = d ? d.getTime() : Infinity;
             });
+
+            var idsJaAgrupados = new Set();
+            var clustersParaMenu = [];
+            idsRelevantes.forEach(function(id) {
+                if (idsJaAgrupados.has(id)) return;
+                var cluster = obterClusterDeCercasProximas(id).filter(function(cid) { return idsRelevantes.includes(cid); });
+                cluster.forEach(function(cid) { idsJaAgrupados.add(cid); });
+                cluster.sort(function(a, b) {
+                    // Dentro do mesmo local físico, azul (Descarga) aparece antes do verde (Cliente)
+                    var ta = locaisCadastrados[a].tipoCerca === 'CLIENTE' ? 1 : 0;
+                    var tb = locaisCadastrados[b].tipoCerca === 'CLIENTE' ? 1 : 0;
+                    if (ta !== tb) return ta - tb;
+                    return mapaDatasAtividade[a] - mapaDatasAtividade[b];
+                });
+                clustersParaMenu.push(cluster);
+            });
+
+            clustersParaMenu.sort(function(clusterA, clusterB) {
+                var dataA = Math.min.apply(null, clusterA.map(function(id) { return mapaDatasAtividade[id]; }));
+                var dataB = Math.min.apply(null, clusterB.map(function(id) { return mapaDatasAtividade[id]; }));
+                return dataA - dataB;
+            });
+
+            idsRelevantes = [].concat.apply([], clustersParaMenu);
 
             badge.innerText = idsRelevantes.length;
 
@@ -1001,6 +1112,124 @@
             fecharModalTrajeto();
             map.setView(marcador.getLatLng(), 16);
             marcador.openPopup();
+        }
+
+        // Monta a Linha do Tempo Geral: para cada visita ao Cliente (verde), localiza as descargas (azul)
+        // do mesmo local físico (cluster) ocorridas dentro da janela de permanência, e monta a sequência
+        // cronológica Chegada → Início Carga/Descarga → Fim Carga/Descarga → Saída.
+        function construirLinhaDoTempoGeral() {
+            var ciclos = [];
+            (relatoriosCalculados.cliente || []).forEach(function(visitaCliente) {
+                if (!(visitaCliente.inicioDate instanceof Date)) return;
+
+                var clusterIds = visitaCliente.localId ? obterClusterDeCercasProximas(visitaCliente.localId) : [visitaCliente.localId];
+
+                var descargasRelacionadas = (relatoriosCalculados.descarga || []).filter(function(d) {
+                    if (!(d.inicioDate instanceof Date)) return false;
+                    if (clusterIds.indexOf(d.localId) === -1) return false;
+                    var limiteSuperior = visitaCliente.fimDate instanceof Date ? visitaCliente.fimDate : new Date(8640000000000000);
+                    return d.inicioDate.getTime() >= visitaCliente.inicioDate.getTime() && d.inicioDate.getTime() <= limiteSuperior.getTime();
+                }).sort(function(a, b) { return a.inicioDate - b.inicioDate; });
+
+                ciclos.push({
+                    localNome: visitaCliente.localNome,
+                    chegada: visitaCliente.inicioDate,
+                    chegadaTexto: visitaCliente.inicio,
+                    saida: visitaCliente.fimDate,
+                    saidaTexto: visitaCliente.fim,
+                    saidaPendente: !!visitaCliente.pendente,
+                    duracaoMin: visitaCliente.duracaoMin,
+                    descargas: descargasRelacionadas
+                });
+            });
+            ciclos.sort(function(a, b) { return a.chegada - b.chegada; });
+            return ciclos;
+        }
+
+        function abrirModalLinhaDoTempo() {
+            if (!dadosPlanilhaBrutos || !dadosPlanilhaBrutos.length) {
+                alert("Nenhuma telemetria carregada para montar a linha do tempo.");
+                return;
+            }
+            // Garante que a Logística de Cercas já foi processada, independente da ordem de cliques.
+            if (!analiseCercasAtualizada && Object.keys(locaisCadastrados).length) {
+                analisarDadosDasCercas();
+            }
+            renderizarLinhaDoTempo();
+            document.getElementById('timeline-modal').style.display = "flex";
+        }
+
+        function fecharModalLinhaDoTempo() {
+            document.getElementById('timeline-modal').style.display = "none";
+        }
+
+        function renderizarLinhaDoTempo() {
+            var corpo = document.getElementById('timeline-corpo');
+            var resumo = document.getElementById('timeline-resumo-total');
+            corpo.innerHTML = "";
+
+            var ciclos = construirLinhaDoTempoGeral();
+
+            if (!ciclos.length) {
+                corpo.innerHTML = `<p style="color:#94a3b8; font-size:0.85rem; text-align:center; margin-top:15px;">Nenhum ciclo de Cliente encontrado. Processe as Cercas Logísticas primeiro.</p>`;
+                resumo.innerText = "";
+                return;
+            }
+
+            var totalMinutos = ciclos.reduce(function(soma, c) { return soma + (c.duracaoMin || 0); }, 0);
+            resumo.innerText = `⏱️ Soma total de permanência em áreas de Cliente (${ciclos.length} ${ciclos.length === 1 ? 'ciclo' : 'ciclos'}): ${formatarDuracaoAmigavel(totalMinutos)}`;
+
+            ciclos.forEach(function(ciclo, idx) {
+                var card = document.createElement('div');
+                card.style.cssText = "border:1px solid #e2e8f0; border-radius:8px; padding:10px; font-size:0.78rem; background:#fafafa;";
+
+                var pontosHtml = "";
+
+                pontosHtml += pontoTimelineHtml("🟢", "Chegada (Cliente)", ciclo.chegadaTexto, "var(--cor-cliente)");
+
+                ciclo.descargas.forEach(function(d) {
+                    pontosHtml += pontoTimelineHtml("🔵", "Início Carga/Descarga", d.inicio, "var(--cor-descarga)");
+                    if (d.pendente) {
+                        pontosHtml += pontoTimelineHtmlTexto("🔵", "Fim Carga/Descarga", "Aguardando carga/descarga", "var(--accent-warning)");
+                    } else {
+                        pontosHtml += pontoTimelineHtml("🔵", "Fim Carga/Descarga", d.fim, "var(--cor-descarga)");
+                    }
+                });
+
+                if (ciclo.saidaPendente) {
+                    pontosHtml += pontoTimelineHtmlTexto("🟢", "Saída (Cliente)", "Aguardando no cliente", "var(--accent-warning)");
+                } else {
+                    pontosHtml += pontoTimelineHtml("🟢", "Saída (Cliente)", ciclo.saidaTexto, "var(--cor-cliente)");
+                }
+
+                card.innerHTML = `
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <b style="color:#1e293b;">Ciclo #${idx + 1} — ${ciclo.localNome}</b>
+                        <span style="background:#ede9fe; color:#5b21b6; border-radius:10px; padding:1px 8px; font-size:0.7rem; font-weight:bold;">${formatarDuracaoAmigavel(ciclo.duracaoMin)}${ciclo.saidaPendente ? ' até agora' : ''}</span>
+                    </div>
+                    <div style="display:flex; flex-direction:column; gap:3px;">${pontosHtml}</div>
+                `;
+                corpo.appendChild(card);
+            });
+        }
+
+        // Gera uma linha clicável (foca o mapa no ponto daquela data/hora) para a Linha do Tempo
+        function pontoTimelineHtml(emoji, rotulo, dataTexto, cor) {
+            return `<div style="display:flex; align-items:center; gap:6px;">
+                <span>${emoji}</span>
+                <span style="color:#64748b; min-width:150px;">${rotulo}:</span>
+                <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${dataTexto}'); return false;" style="color:${cor}; text-decoration:underline; font-weight:bold;">${dataTexto}</a>
+                <button onclick="event.stopPropagation(); copiarParaAreaTransferencia('${dataTexto}', this);" style="width:auto; padding:1px 5px; font-size:0.62rem; margin-left:2px; background:#64748b;" title="Copiar data/hora">📋</button>
+            </div>`;
+        }
+
+        // Variante sem link/cópia, para estados pendentes ("Aguardando...")
+        function pontoTimelineHtmlTexto(emoji, rotulo, texto, cor) {
+            return `<div style="display:flex; align-items:center; gap:6px;">
+                <span>${emoji}</span>
+                <span style="color:#64748b; min-width:150px;">${rotulo}:</span>
+                <span style="color:${cor}; font-weight:bold;">${texto}</span>
+            </div>`;
         }
 
         function focarUltimaPosicao() {
@@ -1612,6 +1841,36 @@ function aplicarFiltroPeriodo() {
             return partes.join(' ');
         }
 
+        // Copia um texto (ex: data/hora "dd/mm/aaaa hh:mm") para a área de transferência,
+        // com fallback para navegadores/contextos sem suporte a navigator.clipboard.
+        function copiarParaAreaTransferencia(texto, origemBotao) {
+            function marcarSucesso() {
+                if (origemBotao) {
+                    var textoOriginal = origemBotao.innerText;
+                    origemBotao.innerText = "✅";
+                    setTimeout(function() { origemBotao.innerText = textoOriginal; }, 1200);
+                }
+                logDebug(`Copiado para a área de transferência: ${texto}`);
+            }
+            function copiarViaFallback() {
+                var textarea = document.createElement('textarea');
+                textarea.value = texto;
+                textarea.style.position = 'fixed';
+                textarea.style.opacity = '0';
+                document.body.appendChild(textarea);
+                textarea.focus(); textarea.select();
+                try { document.execCommand('copy'); } catch (e) {}
+                document.body.removeChild(textarea);
+            }
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                navigator.clipboard.writeText(texto).then(marcarSucesso).catch(function() {
+                    copiarViaFallback(); marcarSucesso();
+                });
+            } else {
+                copiarViaFallback(); marcarSucesso();
+            }
+        }
+
         function analisarDadosDasCercas() {
     limparMarcadoresReajuste();
     relatoriosCalculados.descarga = [];
@@ -1666,7 +1925,9 @@ function aplicarFiltroPeriodo() {
                     if (!estaDentroPoligono) {
                         var dadoVisita = {
                             localNome: local.nome,
+                            localId: id,
                             inicio: formatarDataBr(confirmadoEntrada.date),
+                            inicioDate: confirmadoEntrada.date,
                             fim: formatarDataBr(p.date),
                             fimDate: p.date,
                             duracaoMin: Math.round((p.date.getTime() - confirmadoEntrada.date.getTime()) / 60000),
@@ -1686,7 +1947,9 @@ function aplicarFiltroPeriodo() {
             if (estado === "DENTRO" && confirmadoEntrada) {
                 var dadoPendente = {
                     localNome: local.nome,
+                    localId: id,
                     inicio: formatarDataBr(confirmadoEntrada.date),
+                    inicioDate: confirmadoEntrada.date,
                     fim: "Aguardando no cliente",
                     fimDate: pontosCronologicos[pontosCronologicos.length - 1].date,
                     duracaoMin: Math.round((pontosCronologicos[pontosCronologicos.length - 1].date.getTime() - confirmadoEntrada.date.getTime()) / 60000),
@@ -1709,11 +1972,16 @@ function aplicarFiltroPeriodo() {
                         ? `<span style="color:var(--accent-warning); font-weight:bold;">Aguardando no cliente</span>` 
                         : `<a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${v.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${v.fim}</a>`;
 
+                    var botaoCopiarEntradaCliente = `<button onclick="event.stopPropagation(); copiarParaAreaTransferencia('${v.inicio}', this);" style="width:auto; padding:1px 5px; font-size:0.65rem; margin-left:4px; background:#64748b;" title="Copiar data/hora de entrada">📋</button>`;
+                    var botaoCopiarSaidaCliente = v.fim !== "Aguardando no cliente"
+                        ? `<button onclick="event.stopPropagation(); copiarParaAreaTransferencia('${v.fim}', this);" style="width:auto; padding:1px 5px; font-size:0.65rem; margin-left:4px; background:#64748b;" title="Copiar data/hora de saída">📋</button>`
+                        : '';
+
                     htmlPopupClientes += `
                         <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
                             <b>Operação #${idx + 1} (${formatarDuracaoAmigavel(v.duracaoMin)}${v.pendente ? ' até agora' : ''}):</b><br>
-                            📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${v.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${v.inicio}</a><br>
-                            📤 Saída: ${textoSaida}
+                            📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${v.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${v.inicio}</a>${botaoCopiarEntradaCliente}<br>
+                            📤 Saída: ${textoSaida}${botaoCopiarSaidaCliente}
                         </div>
                     `;
                 });
@@ -1749,8 +2017,11 @@ function aplicarFiltroPeriodo() {
                         if (duracaoTotalCerca >= tempoMinDescarga) {
                             var dadoDescarga = {
                                 localNome: local.nome,
+                                localId: id,
                                 inicio: formatarDataBr(pontoEntradaValidada.date),
+                                inicioDate: pontoEntradaValidada.date,
                                 fim: formatarDataBr(pontoUltimoDetectado.date),
+                                fimDate: pontoUltimoDetectado.date,
                                 duracao: Math.round(duracaoTotalCerca),
                                 layerObjeto: local.layer
                             };
@@ -1768,8 +2039,11 @@ function aplicarFiltroPeriodo() {
                 var duracaoAteAgora = Math.round((pontoUltimoDetectado.date.getTime() - pontoEntradaValidada.date.getTime()) / 60000);
                 var dadoDescargaPendente = {
                     localNome: local.nome,
+                    localId: id,
                     inicio: formatarDataBr(pontoEntradaValidada.date),
+                    inicioDate: pontoEntradaValidada.date,
                     fim: "Aguardando carga/descarga",
+                    fimDate: pontoUltimoDetectado.date,
                     duracao: duracaoAteAgora,
                     pendente: true,
                     layerObjeto: local.layer
@@ -1788,11 +2062,16 @@ function aplicarFiltroPeriodo() {
                     var textoSaidaDescarga = d.pendente
                         ? `<span style="color:var(--accent-warning); font-weight:bold;">Aguardando carga/descarga</span>`
                         : `<a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.fim}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.fim}</a>`;
+                    var botaoCopiarEntradaDescarga = `<button onclick="event.stopPropagation(); copiarParaAreaTransferencia('${d.inicio}', this);" style="width:auto; padding:1px 5px; font-size:0.65rem; margin-left:4px; background:#64748b;" title="Copiar data/hora de entrada">📋</button>`;
+                    var botaoCopiarSaidaDescarga = !d.pendente
+                        ? `<button onclick="event.stopPropagation(); copiarParaAreaTransferencia('${d.fim}', this);" style="width:auto; padding:1px 5px; font-size:0.65rem; margin-left:4px; background:#64748b;" title="Copiar data/hora de saída">📋</button>`
+                        : '';
+
                     htmlPopupDescargas += `
                         <div style="margin-top: 6px; padding-top: 4px; border-top: 1px dashed #cbd5e1; font-size:0.75rem;">
                             <b>Operação #${idx + 1} (${formatarDuracaoAmigavel(d.duracao)}${d.pendente ? ' até agora' : ''}):</b><br>
-                            📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.inicio}</a><br>
-                            📤 Saída Cerca: ${textoSaidaDescarga}
+                            📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.inicio}</a>${botaoCopiarEntradaDescarga}<br>
+                            📤 Saída Cerca: ${textoSaidaDescarga}${botaoCopiarSaidaDescarga}
                         </div>
                     `;
                 });
