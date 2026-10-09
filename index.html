@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador Logístico de Cercas virtuais</title>
+    <title>Analisador Logístico de Cercas virtuais v24.12</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -43,6 +43,10 @@
 
         .drop-zone { border: 2px dashed #cbd5e1; border-radius: 8px; padding: 12px 10px; text-align: center; cursor: pointer; background-color: #f1f5f9; transition: all 0.2s; font-size: 0.85rem; }
         .drop-zone.dragover { border-color: var(--accent-success); background-color: #ecfdf5; }
+
+        /* Mantém a área de carregar planilha (item 1) sempre visível no topo da barra lateral,
+           mesmo ao rolar os menus abaixo dela */
+        .drop-zone-sticky { position: sticky; top: 0; z-index: 40; background: white; padding-top: 12px; padding-bottom: 8px; margin-top: -12px; border-bottom: 2px solid var(--border); }
 
         .btn-group { display: flex; gap: 6px; margin-top: 6px; }
         button, .btn-label { background-color: var(--primary-light); color: white; border: none; padding: 8px 10px; border-radius: 6px; font-size: 0.8rem; cursor: pointer; font-weight: 500; display: inline-flex; align-items: center; justify-content: center; gap: 6px; width: 100%; text-align: center; }
@@ -185,10 +189,10 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.10 <span style="font-size:0.55em; font-weight:normal; opacity:0.75;">atualizado em 06/10/2026</span></h1>
+            🗺️ Analisador Logístico de Cercas virtuais v24.12
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
-           
+            Atualizado em 09/10/2026
         </span>
     </div>
      </div>
@@ -294,16 +298,18 @@
         <div id="sidebar">
             <div class="sidebar-content">
                 <div class="section">
-                    <h2>1. Carregar Planilha (.XLSX)</h2>
-                    <input type="file" id="xlsx-file-input" accept=".xlsx, .xls, .csv" style="margin-bottom: 6px; width: 100%; font-size:0.8rem;">
-                    <div id="drop-zone" class="drop-zone">
-                        <strong>Arraste o arquivo de telemetria aqui</strong>
+                    <div class="drop-zone-sticky">
+                        <h2>1. Carregar Planilha (.XLSX)</h2>
+                        <input type="file" id="xlsx-file-input" accept=".xlsx, .xls, .csv" style="margin-bottom: 6px; width: 100%; font-size:0.8rem;">
+                        <div id="drop-zone" class="drop-zone">
+                            <strong>Arraste o arquivo de telemetria aqui</strong>
+                        </div>
+                        <div class="btn-group">
+                            <button class="btn-danger" style="padding: 6px;" onclick="limparPlanilhaTelemetria()">🗑️ Limpar Telemetria</button>
+                            <button id="btn-ultima-posicao" class="btn-accent" style="padding: 6px; background-color: #0284c7;" onclick="focarUltimaPosicao()">📍 Última Posição</button>
+                        </div>
+                        <div id="file-info" style="margin-top: 4px; font-size: 0.75rem; color: var(--accent-success); display: none; font-weight: bold;"></div>
                     </div>
-                    <div class="btn-group">
-                        <button class="btn-danger" style="padding: 6px;" onclick="limparPlanilhaTelemetria()">🗑️ Limpar Telemetria</button>
-                        <button id="btn-ultima-posicao" class="btn-accent" style="padding: 6px; background-color: #0284c7;" onclick="focarUltimaPosicao()">📍 Última Posição</button>
-                    </div>
-                    <div id="file-info" style="margin-top: 4px; font-size: 0.75rem; color: var(--accent-success); display: none; font-weight: bold;"></div>
                     <!-- FILTRO DE DATA/HORA -->
 <div style="
     margin-top:10px;
@@ -452,6 +458,7 @@
                             <button id="btn-nav-parada-geral" class="btn-nav" style="background: #64748b; display: none;" onclick="navegarColecao('parada')">Próx. Parada ➔</button>
                             <button id="btn-nav-proibida" class="btn-danger" style="display: none;" onclick="navegarColecao('proibida')">⚠️ Ver Alerta Proibido ➔</button>
                         </div>
+                        <button id="btn-limpar-paradas" class="btn-secondary" style="display: none;" onclick="limparParadasEAlertas()">🧹 Limpar</button>
                     </div>
                 </div>
                 
@@ -532,7 +539,7 @@
             </div>
 
             <div class="layer-toggle-panel">
-                <button id="btn-toggle-layer" class="layer-btn" onclick="alternarCamadaMapa()">Satélite 🛰️</button>
+                <button id="btn-toggle-layer" class="layer-btn" style="background:#10b981;" onclick="alternarCamadaMapa()">Mapa de Ruas 🗺️</button>
                 <button id="btn-toggle-polyline" class="layer-btn" onclick="alternarVisibilidadePolyline()">Ocultar Linhas 📐</button>
                 <button id="btn-toggle-trajeto" class="layer-btn" onclick="abrirModalTrajeto()">🛣️ Trajeto</button>
                 <button id="btn-toggle-timeline" class="layer-btn" style="background:#7c3aed;" onclick="abrirModalLinhaDoTempo()">🕐 Linha do Tempo</button>
@@ -658,7 +665,7 @@
         var arrayPontosPlotados = []; 
         
         var camadaGoogleRuas, camadaGoogleSatelite;
-        var modoSateliteAtivo = false;
+        var modoSateliteAtivo = true; // Satélite ativo por padrão (pode voltar manualmente para Mapa de Ruas)
         var visibilidadePolylineAtiva = true;
         var colunasDetectadas = { lat: null, lon: null, vel: null, time: null, porta: null, dataCol: null, horaCol: null, local: null };
 
@@ -680,7 +687,7 @@
 
             camadaGoogleRuas = L.tileLayer('https://mt1.google.com/vt/lyrs=m&x={x}&y={y}&z={z}', { attribution: '© Google Maps', maxZoom: 20 });
             camadaGoogleSatelite = L.tileLayer('https://mt1.google.com/vt/lyrs=y&x={x}&y={y}&z={z}', { attribution: '© Google Maps Satélite', maxZoom: 20 });
-            camadaGoogleRuas.addTo(map);
+            camadaGoogleSatelite.addTo(map); // Inicia no modo Satélite (padrão); alternarCamadaMapa() permite voltar ao Mapa de Ruas
             
             camadaDesenhos = new L.FeatureGroup().addTo(map);
             camadaPontosPlanilha.addTo(map);
@@ -931,7 +938,7 @@
             if (primeiroEl && primeiroEl.scrollIntoView) primeiroEl.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
 
-        // Limpa TODOS os pinos do menu fixo (inclusive os detectados automaticamente por permanência
+        // CRIADO POR pablojulier. Limpa TODOS os pinos do menu fixo (inclusive os detectados automaticamente por permanência
         // de telemetria) — não mexe na telemetria, apenas oculta o menu até a próxima ação relevante
         // (novo processamento, nova plotagem de telemetria ou clique manual numa cerca).
         function limparPinosDoMenuCercas(silencioso) {
@@ -1047,7 +1054,8 @@
             document.getElementById('btn-nav-cliente').style.display = "none";
             document.getElementById('btn-nav-parada-geral').style.display = "none";
             document.getElementById('btn-nav-proibida').style.display = "none";
-            
+            document.getElementById('btn-limpar-paradas').style.display = "none";
+
             atualizarBadgesEContadoresTotais();
             renderizarHistoricoNaAba();
             renderizarMarcadoresDeAcessoCercas();
@@ -1118,30 +1126,77 @@
         // do mesmo local físico (cluster) ocorridas dentro da janela de permanência, e monta a sequência
         // cronológica Chegada → Início Carga/Descarga → Fim Carga/Descarga → Saída.
         function construirLinhaDoTempoGeral() {
-            var ciclos = [];
-            (relatoriosCalculados.cliente || []).forEach(function(visitaCliente) {
-                if (!(visitaCliente.inicioDate instanceof Date)) return;
-
-                var clusterIds = visitaCliente.localId ? obterClusterDeCercasProximas(visitaCliente.localId) : [visitaCliente.localId];
-
-                var descargasRelacionadas = (relatoriosCalculados.descarga || []).filter(function(d) {
-                    if (!(d.inicioDate instanceof Date)) return false;
-                    if (clusterIds.indexOf(d.localId) === -1) return false;
-                    var limiteSuperior = visitaCliente.fimDate instanceof Date ? visitaCliente.fimDate : new Date(8640000000000000);
-                    return d.inicioDate.getTime() >= visitaCliente.inicioDate.getTime() && d.inicioDate.getTime() <= limiteSuperior.getTime();
-                }).sort(function(a, b) { return a.inicioDate - b.inicioDate; });
-
-                ciclos.push({
-                    localNome: visitaCliente.localNome,
-                    chegada: visitaCliente.inicioDate,
-                    chegadaTexto: visitaCliente.inicio,
-                    saida: visitaCliente.fimDate,
-                    saidaTexto: visitaCliente.fim,
-                    saidaPendente: !!visitaCliente.pendente,
-                    duracaoMin: visitaCliente.duracaoMin,
-                    descargas: descargasRelacionadas
-                });
+            var visitas = (relatoriosCalculados.cliente || []).filter(function(v) {
+                return v.inicioDate instanceof Date;
             });
+
+            var ciclosBase = visitas.map(function(visitaCliente) {
+                var clusterIds = visitaCliente.localId ? obterClusterDeCercasProximas(visitaCliente.localId) : [visitaCliente.localId];
+                return {
+                    visita: visitaCliente,
+                    clusterIds: clusterIds,
+                    inicioTime: visitaCliente.inicioDate.getTime(),
+                    fimTime: (visitaCliente.fimDate instanceof Date) ? visitaCliente.fimDate.getTime() : Infinity,
+                    descargas: []
+                };
+            });
+
+            // Atribui cada descarga (azul) ao ciclo de Cliente (verde) do mesmo cluster mais fiel à realidade:
+            // preferindo sobreposição real de intervalos (Início-Fim da descarga x Chegada-Saída do cliente),
+            // pois ruído de GPS na borda das cercas pode registrar o início da descarga um pouco antes da
+            // chegada confirmada na área verde. Se nenhum ciclo tiver sobreposição, usa o ciclo mais próximo
+            // no tempo, para nunca descartar o registro da linha do tempo.
+            (relatoriosCalculados.descarga || []).forEach(function(d) {
+                if (!(d.inicioDate instanceof Date)) return;
+                var inicioD = d.inicioDate.getTime();
+                var fimD = (d.fimDate instanceof Date) ? d.fimDate.getTime() : Infinity;
+
+                var candidatos = ciclosBase.filter(function(c) {
+                    return c.clusterIds.indexOf(d.localId) !== -1;
+                });
+                if (!candidatos.length) return;
+
+                var sobrepostos = candidatos.filter(function(c) {
+                    return inicioD <= c.fimTime && fimD >= c.inicioTime;
+                });
+
+                var escolhido;
+                if (sobrepostos.length === 1) {
+                    escolhido = sobrepostos[0];
+                } else if (sobrepostos.length > 1) {
+                    escolhido = sobrepostos.sort(function(a, b) {
+                        var sobA = Math.min(fimD, a.fimTime) - Math.max(inicioD, a.inicioTime);
+                        var sobB = Math.min(fimD, b.fimTime) - Math.max(inicioD, b.inicioTime);
+                        return sobB - sobA;
+                    })[0];
+                } else {
+                    var melhorDist = Infinity;
+                    candidatos.forEach(function(c) {
+                        var dist;
+                        if (fimD < c.inicioTime) dist = c.inicioTime - fimD;
+                        else if (inicioD > c.fimTime) dist = inicioD - c.fimTime;
+                        else dist = 0;
+                        if (dist < melhorDist) { melhorDist = dist; escolhido = c; }
+                    });
+                }
+
+                if (escolhido) escolhido.descargas.push(d);
+            });
+
+            var ciclos = ciclosBase.map(function(c) {
+                c.descargas.sort(function(a, b) { return a.inicioDate - b.inicioDate; });
+                return {
+                    localNome: c.visita.localNome,
+                    chegada: c.visita.inicioDate,
+                    chegadaTexto: c.visita.inicio,
+                    saida: c.visita.fimDate,
+                    saidaTexto: c.visita.fim,
+                    saidaPendente: !!c.visita.pendente,
+                    duracaoMin: c.visita.duracaoMin,
+                    descargas: c.descargas
+                };
+            });
+
             ciclos.sort(function(a, b) { return a.chegada - b.chegada; });
             return ciclos;
         }
@@ -1776,6 +1831,13 @@ function aplicarFiltroPeriodo() {
 
     menuCercasEscondidoManualmente = false;
     renderizarMarcadoresDeAcessoCercas();
+
+    // Toda vez que uma planilha é importada/solta na área de drop, processa as Cercas Logísticas
+    // automaticamente (só quando já existe ao menos uma cerca cadastrada no mapa).
+    if (Object.keys(locaisCadastrados).length) {
+        analisarDadosDasCercas();
+    }
+
     logDebug(`Pontos plotados.`);
 }
         }
@@ -2097,6 +2159,26 @@ function aplicarFiltroPeriodo() {
     logDebug("Logística de cercas processada!");
 }
 
+        // Limpa do mapa os resultados de "Identificar Paradas e Alertas" (raio amarelo/vermelho),
+        // sem afetar as Cercas Logísticas (Cliente/Descarga) nem a telemetria carregada.
+        function limparParadasEAlertas() {
+            limparMarcadoresReajuste();
+            camadaEventosDinamicos.clearLayers();
+
+            relatoriosCalculados.parada = [];
+            relatoriosCalculados.proibida = [];
+            indicesNavegacao.parada = -1;
+            indicesNavegacao.proibida = -1;
+
+            document.getElementById('btn-nav-parada-geral').style.display = "none";
+            document.getElementById('btn-nav-proibida').style.display = "none";
+            document.getElementById('btn-limpar-paradas').style.display = "none";
+
+            atualizarBadgesEContadoresTotais();
+            renderizarHistoricoNaAba();
+            logDebug("Paradas e alertas removidos do mapa.");
+        }
+
         function identificarParadasEProibidas() {
             limparMarcadoresReajuste();
             camadaEventosDinamicos.clearLayers();
@@ -2185,6 +2267,7 @@ function aplicarFiltroPeriodo() {
 
             document.getElementById('btn-nav-parada-geral').style.display = relatoriosCalculados.parada.length ? "inline-flex" : "none";
             document.getElementById('btn-nav-proibida').style.display = relatoriosCalculados.proibida.length ? "inline-flex" : "none";
+            document.getElementById('btn-limpar-paradas').style.display = (relatoriosCalculados.parada.length || relatoriosCalculados.proibida.length) ? "inline-flex" : "none";
 
             atualizarBadgesEContadoresTotais();
             if(relatoriosCalculados.proibida.length) alternarAbaResultados('proibida');
