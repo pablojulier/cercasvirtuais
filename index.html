@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador Logístico de Cercas virtuais v24.12</title>
+    <title>Analisador Logístico de Cercas virtuais v24.17</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -189,7 +189,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.12
+            🗺️ Analisador Logístico de Cercas virtuais v24.17
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
             Atualizado em 09/10/2026
@@ -1360,8 +1360,96 @@
                 }
             }
 
+            // Campo para pesquisar a cidade de destino (distância e previsão de chegada a partir da última posição).
+            if (ultimoMarcador.getPopup()) {
+                var conteudoComDestino = ultimoMarcador.getPopup().getContent();
+                if (typeof conteudoComDestino === "string" && conteudoComDestino.indexOf('id="destino-cidade-input"') === -1) {
+                    conteudoComDestino += `
+                        <div style="margin-top:8px; padding-top:6px; border-top:1px dashed #cbd5e1;">
+                            <b>🏁 Cidade de destino</b><br>
+                            <div style="display:flex; gap:4px; margin-top:4px;">
+                                <input type="text" id="destino-cidade-input" placeholder="Ex: Goiânia - GO" style="flex:1; min-width:0; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.78rem;" onkeydown="if(event.key==='Enter'){buscarDestinoUltimaPosicao();}">
+                                <button onclick="buscarDestinoUltimaPosicao()" style="width:auto; padding:4px 10px; font-size:0.75rem; background:#2563eb;">OK</button>
+                            </div>
+                            <div id="destino-resultado" style="margin-top:6px; font-size:0.75rem; color:#334155;"></div>
+                        </div>`;
+                    ultimoMarcador.setPopupContent(conteudoComDestino);
+                }
+            }
+
             map.setView(coordenadas, 16);
             ultimoMarcador.openPopup();
+        }
+
+        // Pesquisa a cidade digitada (Nominatim/OpenStreetMap, gratuito) e calcula, a partir da última posição,
+        // a distância por estrada e a previsão de tempo (OSRM, gratuito). Se a rota falhar, usa linha reta como estimativa.
+        async function buscarDestinoUltimaPosicao() {
+            var campo = document.getElementById('destino-cidade-input');
+            var saida = document.getElementById('destino-resultado');
+            if (!campo || !saida) return;
+
+            var cidade = (campo.value || "").trim();
+            if (!cidade) { saida.innerHTML = `<span style="color:#b45309;">Digite o nome da cidade de destino.</span>`; return; }
+            if (!arrayPontosPlotados || !arrayPontosPlotados.length) return;
+
+            function escapar(t) {
+                return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+            }
+
+            var origem = arrayPontosPlotados[arrayPontosPlotados.length - 1].getLatLng();
+            saida.innerHTML = `⏳ Buscando "${escapar(cidade)}"...`;
+
+            try {
+                var destino = null;
+                var tentativas = [
+                    "https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=pt-BR&countrycodes=br&q=",
+                    "https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=pt-BR&q="
+                ];
+                for (var t = 0; t < tentativas.length && !destino; t++) {
+                    var respGeo = await fetch(tentativas[t] + encodeURIComponent(cidade));
+                    if (!respGeo.ok) throw new Error("Geocodificação respondeu " + respGeo.status);
+                    var listaGeo = await respGeo.json();
+                    if (listaGeo && listaGeo.length) destino = listaGeo[0];
+                }
+                if (!destino) { saida.innerHTML = `<span style="color:#b45309;">Cidade não encontrada. Tente "Cidade - UF".</span>`; return; }
+
+                var destLat = parseFloat(destino.lat), destLon = parseFloat(destino.lon);
+                var nomeDestino = escapar(destino.display_name || cidade);
+
+                var distanciaKm = null, minutosRota = null, porEstrada = false;
+                try {
+                    var urlRota = `https://router.project-osrm.org/route/v1/driving/${origem.lng},${origem.lat};${destLon},${destLat}?overview=false`;
+                    var respRota = await fetch(urlRota);
+                    if (!respRota.ok) throw new Error("Rota respondeu " + respRota.status);
+                    var dadosRota = await respRota.json();
+                    if (dadosRota.routes && dadosRota.routes.length) {
+                        distanciaKm = dadosRota.routes[0].distance / 1000;
+                        minutosRota = dadosRota.routes[0].duration / 60;
+                        porEstrada = true;
+                    }
+                } catch (erroRota) {
+                    logDebug("Rota por estrada indisponível; usando distância em linha reta como estimativa.", true);
+                }
+
+                if (!porEstrada) {
+                    distanciaKm = distanciaEmMetrosEntrePontos({ lat: origem.lat, lng: origem.lng }, { lat: destLat, lng: destLon }) / 1000;
+                }
+
+                var minutosCaminhao = Math.round((distanciaKm / 60) * 60); // média de 60 km/h
+                var html = `📍 Destino: <b>${nomeDestino}</b><br>`;
+                html += porEstrada
+                    ? `🛣️ Distância por estrada: <b>${distanciaKm.toFixed(1)} km</b><br>`
+                    : `📏 Distância em linha reta (estimativa): <b>${distanciaKm.toFixed(1)} km</b><br>`;
+                html += `🚚 Previsão (média 60 km/h): <b>${formatarDuracaoAmigavel(minutosCaminhao)}</b>`;
+                if (porEstrada) {
+                    html += `<br>🚗 Previsão do trajeto (veículo leve): ${formatarDuracaoAmigavel(Math.round(minutosRota))}`;
+                }
+                saida.innerHTML = html;
+                logDebug(`Destino "${cidade}": ${distanciaKm.toFixed(1)} km, previsão ${formatarDuracaoAmigavel(minutosCaminhao)} (média 60 km/h).`);
+            } catch (erro) {
+                saida.innerHTML = `<span style="color:#b91c1c;">Não foi possível consultar o destino (sem internet ou serviço indisponível).</span>`;
+                logDebug("Falha ao buscar cidade de destino: " + erro.message, true);
+            }
         }
 
         function mudarModoDesenho(novoModo) {
@@ -1397,7 +1485,7 @@
             var nomeLocal = nomeCustomizado;
             
             if (!nomeLocal) {
-                var sufixo = tipoCerca === "CLIENTE" ? "Cliente " : (tipoCerca === "PROIBIDA" ? "Z. Proibida " : "Cerca Descarga ");
+                var sufixo = tipoCerca === "CLIENTE" ? "Cliente " : (tipoCerca === "PROIBIDA" ? "Z. Proibida " : "CARGA/DESCARGA ");
                 nomeLocal = prompt("Identificação do Perímetro / Cerca:", sufixo + (Object.keys(locaisCadastrados).length + 1));
             }
             
@@ -2412,7 +2500,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.8_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.17_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
