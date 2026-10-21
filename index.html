@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador Logístico de Cercas virtuais v24.18</title>
+    <title>Analisador Logístico de Cercas virtuais v24.19</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -189,7 +189,7 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.18
+            🗺️ Analisador Logístico de Cercas virtuais v24.19
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
             Atualizado em 21/10/2026
@@ -289,6 +289,10 @@
                 <button onclick="fecharModalLinhaDoTempo()" style="background: none; border: none; font-size: 1.2rem; cursor: pointer; color: #94a3b8;">&times;</button>
             </div>
             <div id="timeline-resumo-total" style="background:#f5f3ff; border:1px solid #ddd6fe; border-radius:6px; padding:8px 10px; font-size:0.8rem; color:#5b21b6; font-weight:bold;"></div>
+            <div style="display:flex; justify-content:flex-end; margin-top:-4px;">
+                <button id="timeline-btn-tempo-total" onclick="alternarTempoTotalLinhaDoTempo()" style="width:auto; background:none; border:none; color:#64748b; font-size:0.72rem; text-decoration:underline; cursor:pointer; padding:0 2px;">⏱️ Tempo total no local</button>
+            </div>
+            <div id="timeline-tempo-total" style="display:none; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; padding:8px 10px; font-size:0.76rem; color:#334155;"></div>
             <div id="timeline-corpo" style="overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 10px;"></div>
         </div>
     </div>
@@ -1231,6 +1235,8 @@
                 return;
             }
 
+            preencherTempoTotalPorLocal(ciclos);
+
             var totalMinutos = ciclos.reduce(function(soma, c) { return soma + (c.duracaoMin || 0); }, 0);
             resumo.innerText = `⏱️ Soma total de permanência em áreas de Cliente (${ciclos.length} ${ciclos.length === 1 ? 'ciclo' : 'ciclos'}): ${formatarDuracaoAmigavel(totalMinutos)}`;
 
@@ -1281,6 +1287,47 @@
                 `;
                 corpo.appendChild(card);
             });
+        }
+
+        // Tempo total no local: ciclos consecutivos com exatamente o mesmo nome (sem outro local no meio) formam
+        // um grupo, contado da primeira chegada até a última saída (inclui as saídas para esperar e retornos).
+        function preencherTempoTotalPorLocal(ciclos) {
+            var painel = document.getElementById('timeline-tempo-total');
+            painel.style.display = "none";
+            painel.innerHTML = "";
+
+            var grupos = [];
+            ciclos.forEach(function(c) {
+                var nome = (c.localNome || "").trim();
+                var ultimo = grupos[grupos.length - 1];
+                if (ultimo && ultimo.nome === nome) { ultimo.ciclos.push(c); }
+                else { grupos.push({ nome: nome, ciclos: [c] }); }
+            });
+
+            function escapar(t) { return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;"); }
+
+            var html = "";
+            grupos.forEach(function(g) {
+                var primeiro = g.ciclos[0], ultimoCiclo = g.ciclos[g.ciclos.length - 1];
+                var fim = ultimoCiclo.saida instanceof Date ? ultimoCiclo.saida : null;
+                if (!(primeiro.chegada instanceof Date) || !fim) return;
+                var totalMin = Math.max(0, Math.round((fim.getTime() - primeiro.chegada.getTime()) / 60000));
+                var dentroMin = g.ciclos.reduce(function(soma, c) { return soma + (c.duracaoMin || 0); }, 0);
+                var pendente = !!ultimoCiclo.saidaPendente;
+                html += `<div style="margin-bottom:6px;">
+                    <b>${escapar(g.nome)}</b> — <span style="color:#5b21b6; font-weight:bold;">${formatarDuracaoAmigavel(totalMin)}${pendente ? ' até agora' : ''}</span>
+                    <span style="color:#64748b;">(${g.ciclos.length} ${g.ciclos.length === 1 ? 'ciclo' : 'ciclos'})</span>`;
+                if (g.ciclos.length > 1) {
+                    html += `<br><span style="color:#64748b;">dentro da área: ${formatarDuracaoAmigavel(dentroMin)} • fora, entre os ciclos: ${formatarDuracaoAmigavel(Math.max(0, totalMin - dentroMin))}</span>`;
+                }
+                html += `</div>`;
+            });
+            painel.innerHTML = html || `<span style="color:#94a3b8;">Sem dados para calcular.</span>`;
+        }
+
+        function alternarTempoTotalLinhaDoTempo() {
+            var painel = document.getElementById('timeline-tempo-total');
+            painel.style.display = painel.style.display === "none" ? "block" : "none";
         }
 
         // Soma a distância (em metros) percorrida pelos pontos de telemetria entre duas datas (trajeto real, ponto a ponto).
@@ -2531,7 +2578,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.18_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.19_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
