@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador Logístico de Cercas virtuais v24.17</title>
+    <title>Analisador Logístico de Cercas virtuais v24.18</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -189,10 +189,10 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.17
+            🗺️ Analisador Logístico de Cercas virtuais v24.18
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
-            Atualizado em 09/10/2026
+            Atualizado em 21/10/2026
         </span>
     </div>
      </div>
@@ -1235,6 +1235,21 @@
             resumo.innerText = `⏱️ Soma total de permanência em áreas de Cliente (${ciclos.length} ${ciclos.length === 1 ? 'ciclo' : 'ciclos'}): ${formatarDuracaoAmigavel(totalMinutos)}`;
 
             ciclos.forEach(function(ciclo, idx) {
+                // Entre um ciclo e o seguinte: distância percorrida e tempo que separam a saída de um da chegada do outro.
+                if (idx > 0) {
+                    var cicloAnterior = ciclos[idx - 1];
+                    if (!cicloAnterior.saidaPendente && cicloAnterior.saida instanceof Date && ciclo.chegada instanceof Date) {
+                        var minutosEntre = Math.round((ciclo.chegada.getTime() - cicloAnterior.saida.getTime()) / 60000);
+                        if (minutosEntre >= 0) {
+                            var metrosEntre = calcularDistanciaPercorridaEntreDatas(cicloAnterior.saida, ciclo.chegada);
+                            var conector = document.createElement('div');
+                            conector.style.cssText = "align-self:center; background:#eff6ff; border:1px dashed #93c5fd; color:#1e40af; border-radius:14px; padding:3px 12px; font-size:0.72rem; font-weight:bold; text-align:center;";
+                            conector.innerHTML = `⬇️ 🛣️ ${formatarDistanciaAmigavel(metrosEntre)} percorridos &nbsp;•&nbsp; ⏳ ${formatarDuracaoAmigavel(minutosEntre)} entre os ciclos`;
+                            corpo.appendChild(conector);
+                        }
+                    }
+                }
+
                 var card = document.createElement('div');
                 card.style.cssText = "border:1px solid #e2e8f0; border-radius:8px; padding:10px; font-size:0.78rem; background:#fafafa;";
 
@@ -1266,6 +1281,22 @@
                 `;
                 corpo.appendChild(card);
             });
+        }
+
+        // Soma a distância (em metros) percorrida pelos pontos de telemetria entre duas datas (trajeto real, ponto a ponto).
+        function calcularDistanciaPercorridaEntreDatas(dataInicio, dataFim) {
+            var inicio = dataInicio.getTime(), fim = dataFim.getTime();
+            var anterior = null, total = 0;
+            (arrayPontosPlotados || []).forEach(function(marcador) {
+                var d = marcador.dataHoraPonto;
+                if (!(d instanceof Date) || isNaN(d.getTime())) return;
+                var t = d.getTime();
+                if (t < inicio || t > fim) return;
+                var ll = marcador.getLatLng();
+                if (anterior) total += distanciaEmMetrosEntrePontos({ lat: anterior.lat, lng: anterior.lng }, { lat: ll.lat, lng: ll.lng });
+                anterior = ll;
+            });
+            return total;
         }
 
         // Gera uma linha clicável (foca o mapa no ponto daquela data/hora) para a Linha do Tempo
@@ -2500,7 +2531,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.17_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.18_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
