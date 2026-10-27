@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador Logístico de Cercas virtuais v24.19</title>
+    <title>Analisador Logístico de Cercas virtuais v24.20</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -46,6 +46,7 @@
 
         /* Mantém a área de carregar planilha (item 1) sempre visível no topo da barra lateral,
            mesmo ao rolar os menus abaixo dela */
+        .tooltip-destino { background: rgba(255,255,255,0.92); border: 1px solid #94a3b8; color: #0f172a; font-size: 0.72rem; font-weight: bold; padding: 1px 6px; box-shadow: none; }
         .drop-zone-sticky { position: sticky; top: 0; z-index: 40; background: white; padding-top: 12px; padding-bottom: 8px; margin-top: -12px; border-bottom: 2px solid var(--border); }
 
         .btn-group { display: flex; gap: 6px; margin-top: 6px; }
@@ -189,10 +190,10 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.19
+            🗺️ Analisador Logístico de Cercas virtuais v24.20
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
-            Atualizado em 21/10/2026
+            Atualizado em 27/10/2026
         </span>
     </div>
      </div>
@@ -1444,9 +1445,9 @@
                 if (typeof conteudoComDestino === "string" && conteudoComDestino.indexOf('id="destino-cidade-input"') === -1) {
                     conteudoComDestino += `
                         <div style="margin-top:8px; padding-top:6px; border-top:1px dashed #cbd5e1;">
-                            <b>🏁 Cidade de destino</b><br>
+                            <b>🏁 Destino (cidade ou cerca)</b><br>
                             <div style="display:flex; gap:4px; margin-top:4px;">
-                                <input type="text" id="destino-cidade-input" placeholder="Ex: Goiânia - GO" style="flex:1; min-width:0; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.78rem;" onkeydown="if(event.key==='Enter'){buscarDestinoUltimaPosicao();}">
+                                <input type="text" id="destino-cidade-input" placeholder="Ex: Goiânia - GO ou Nestlé Cordeirópolis" style="flex:1; min-width:0; padding:4px 6px; border:1px solid #cbd5e1; border-radius:4px; font-size:0.78rem;" onkeydown="if(event.key==='Enter'){buscarDestinoUltimaPosicao();}">
                                 <button onclick="buscarDestinoUltimaPosicao()" style="width:auto; padding:4px 10px; font-size:0.75rem; background:#2563eb;">OK</button>
                             </div>
                             <div id="destino-resultado" style="margin-top:6px; font-size:0.75rem; color:#334155;"></div>
@@ -1459,44 +1460,125 @@
             ultimoMarcador.openPopup();
         }
 
-        // Pesquisa a cidade digitada (Nominatim/OpenStreetMap, gratuito) e calcula, a partir da última posição,
-        // a distância por estrada e a previsão de tempo (OSRM, gratuito). Se a rota falhar, usa linha reta como estimativa.
+        // Normaliza texto para busca: minúsculas, sem acentos e sem pontuação; devolve a lista de termos (ignora "de/da/do...").
+        function normalizarTermosBusca(texto) {
+            var base = String(texto || "").normalize("NFD").replace(/[̀-ͯ]/g, "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+            var ignorar = ["de", "da", "do", "das", "dos", "e"];
+            return base.split(" ").filter(function(t) { return t && ignorar.indexOf(t) === -1; });
+        }
+
+        // Cercas desenhadas candidatas a destino (Cliente; se não houver nenhuma, Descarga). Zona proibida nunca é destino.
+        function listarCercasDestino(filtro) {
+            var todas = [];
+            Object.keys(locaisCadastrados).forEach(function(id) {
+                var local = locaisCadastrados[id];
+                if (local.tipoCerca === "PROIBIDA") return;
+                var centro = calcularCentroideCerca(local.layer);
+                if (!centro) return;
+                var item = { id: id, nome: local.nome || "", tipo: local.tipoCerca || "DESCARGA", centro: centro };
+                if (!filtro || filtro(item)) todas.push(item);
+            });
+            var clientes = todas.filter(function(c) { return c.tipo === "CLIENTE"; });
+            return clientes.length ? clientes : todas;
+        }
+
+        // Cercas cujo nome contém todos os termos digitados (ex.: "Nestlé Cordeirópolis", "Americanas Benevides").
+        function encontrarCercasPorNome(consulta) {
+            var termos = normalizarTermosBusca(consulta);
+            if (!termos.length) return [];
+            return listarCercasDestino(function(c) {
+                var nome = normalizarTermosBusca(c.nome).join(" ");
+                return termos.every(function(t) { return nome.indexOf(t) !== -1; });
+            });
+        }
+
+        // Ordena pela distância em linha reta até a origem e devolve as `max` mais próximas.
+        function selecionarCercasMaisProximas(cercas, origem, max) {
+            return cercas.map(function(c) {
+                return { cerca: c, metros: distanciaEmMetrosEntrePontos({ lat: origem.lat, lng: origem.lng }, { lat: c.centro.lat, lng: c.centro.lng }) };
+            }).sort(function(a, b) { return a.metros - b.metros; }).slice(0, max);
+        }
+
+        // Pesquisa o destino digitado: primeiro procura entre as cercas desenhadas pelo nome (ex.: "Nestlé Cordeirópolis");
+        // se não achar, procura a cidade (Nominatim/OpenStreetMap, gratuito) e usa as cercas desenhadas nela. Traça linhas
+        // da última posição até as 2 cercas mais próximas e calcula distância por estrada e previsão (OSRM, gratuito).
         async function buscarDestinoUltimaPosicao() {
             var campo = document.getElementById('destino-cidade-input');
             var saida = document.getElementById('destino-resultado');
             if (!campo || !saida) return;
 
-            var cidade = (campo.value || "").trim();
-            if (!cidade) { saida.innerHTML = `<span style="color:#b45309;">Digite o nome da cidade de destino.</span>`; return; }
+            var consulta = (campo.value || "").trim();
+            if (!consulta) { saida.innerHTML = `<span style="color:#b45309;">Digite a cidade ou o nome da cerca de destino.</span>`; return; }
             if (!arrayPontosPlotados || !arrayPontosPlotados.length) return;
 
             function escapar(t) {
                 return String(t).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
             }
 
+            if (!window.camadaDestinoUltimaPosicao) { window.camadaDestinoUltimaPosicao = L.layerGroup().addTo(map); }
+            window.camadaDestinoUltimaPosicao.clearLayers();
+
             var origem = arrayPontosPlotados[arrayPontosPlotados.length - 1].getLatLng();
-            saida.innerHTML = `⏳ Buscando "${escapar(cidade)}"...`;
+            saida.innerHTML = `⏳ Buscando "${escapar(consulta)}"...`;
 
             try {
-                var destino = null;
-                var tentativas = [
-                    "https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=pt-BR&countrycodes=br&q=",
-                    "https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=pt-BR&q="
-                ];
-                for (var t = 0; t < tentativas.length && !destino; t++) {
-                    var respGeo = await fetch(tentativas[t] + encodeURIComponent(cidade));
-                    if (!respGeo.ok) throw new Error("Geocodificação respondeu " + respGeo.status);
-                    var listaGeo = await respGeo.json();
-                    if (listaGeo && listaGeo.length) destino = listaGeo[0];
-                }
-                if (!destino) { saida.innerHTML = `<span style="color:#b45309;">Cidade não encontrada. Tente "Cidade - UF".</span>`; return; }
+                var cabecalho = "";
+                var cercas = encontrarCercasPorNome(consulta);
+                var destLat = null, destLon = null;
 
-                var destLat = parseFloat(destino.lat), destLon = parseFloat(destino.lon);
-                var nomeDestino = escapar(destino.display_name || cidade);
+                if (cercas.length) {
+                    cabecalho = `🔎 Cerca encontrada pelo nome<br>`;
+                } else {
+                    var destino = null;
+                    var tentativas = [
+                        "https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=pt-BR&countrycodes=br&q=",
+                        "https://nominatim.openstreetmap.org/search?format=json&limit=1&accept-language=pt-BR&q="
+                    ];
+                    for (var t = 0; t < tentativas.length && !destino; t++) {
+                        var respGeo = await fetch(tentativas[t] + encodeURIComponent(consulta));
+                        if (!respGeo.ok) throw new Error("Geocodificação respondeu " + respGeo.status);
+                        var listaGeo = await respGeo.json();
+                        if (listaGeo && listaGeo.length) destino = listaGeo[0];
+                    }
+                    if (!destino) { saida.innerHTML = `<span style="color:#b45309;">Nenhuma cerca ou cidade encontrada. Tente "Cidade - UF" ou parte do nome da cerca.</span>`; return; }
+
+                    destLat = parseFloat(destino.lat); destLon = parseFloat(destino.lon);
+                    cabecalho = `📍 Cidade: <b>${escapar(destino.display_name || consulta)}</b><br>`;
+
+                    var caixa = (destino.boundingbox || []).map(parseFloat); // [sul, norte, oeste, leste]
+                    var nomeCidade = normalizarTermosBusca(String(consulta).split(/[-,]/)[0]).join(" ");
+                    cercas = listarCercasDestino(function(c) {
+                        var dentroCaixa = caixa.length === 4 && c.centro.lat >= caixa[0] && c.centro.lat <= caixa[1] && c.centro.lng >= caixa[2] && c.centro.lng <= caixa[3];
+                        var nomeCerca = normalizarTermosBusca(c.nome).join(" ");
+                        return dentroCaixa || (nomeCidade && nomeCerca.indexOf(nomeCidade) !== -1);
+                    });
+                }
+
+                var maisProximas = selecionarCercasMaisProximas(cercas, origem, 2);
+                var alvoRota = maisProximas.length
+                    ? { lat: maisProximas[0].cerca.centro.lat, lng: maisProximas[0].cerca.centro.lng }
+                    : { lat: destLat, lng: destLon };
+
+                // Linhas no mapa: da última posição até cada cerca (ou até o centro da cidade, se não houver cerca desenhada).
+                var pontosParaEnquadrar = [[origem.lat, origem.lng]];
+                if (maisProximas.length) {
+                    maisProximas.forEach(function(m, i) {
+                        var cor = obterCorPorTipo(m.cerca.tipo);
+                        var linha = L.polyline([[origem.lat, origem.lng], [m.cerca.centro.lat, m.cerca.centro.lng]], { color: cor, weight: 4, opacity: 0.9, dashArray: '8,8' });
+                        linha.bindTooltip(`${m.cerca.nome} • ${formatarDistanciaAmigavel(m.metros)}`, { permanent: true, direction: 'center', className: 'tooltip-destino' });
+                        window.camadaDestinoUltimaPosicao.addLayer(linha);
+                        pontosParaEnquadrar.push([m.cerca.centro.lat, m.cerca.centro.lng]);
+                    });
+                } else if (destLat !== null) {
+                    var linhaCidade = L.polyline([[origem.lat, origem.lng], [destLat, destLon]], { color: '#64748b', weight: 3, opacity: 0.8, dashArray: '4,8' });
+                    window.camadaDestinoUltimaPosicao.addLayer(linhaCidade);
+                    pontosParaEnquadrar.push([destLat, destLon]);
+                }
+                if (pontosParaEnquadrar.length > 1) { map.fitBounds(L.latLngBounds(pontosParaEnquadrar), { padding: [70, 70], maxZoom: 13 }); }
 
                 var distanciaKm = null, minutosRota = null, porEstrada = false;
                 try {
-                    var urlRota = `https://router.project-osrm.org/route/v1/driving/${origem.lng},${origem.lat};${destLon},${destLat}?overview=false`;
+                    var urlRota = `https://router.project-osrm.org/route/v1/driving/${origem.lng},${origem.lat};${alvoRota.lng},${alvoRota.lat}?overview=false`;
                     var respRota = await fetch(urlRota);
                     if (!respRota.ok) throw new Error("Rota respondeu " + respRota.status);
                     var dadosRota = await respRota.json();
@@ -1510,23 +1592,31 @@
                 }
 
                 if (!porEstrada) {
-                    distanciaKm = distanciaEmMetrosEntrePontos({ lat: origem.lat, lng: origem.lng }, { lat: destLat, lng: destLon }) / 1000;
+                    distanciaKm = distanciaEmMetrosEntrePontos({ lat: origem.lat, lng: origem.lng }, { lat: alvoRota.lat, lng: alvoRota.lng }) / 1000;
                 }
 
                 var minutosCaminhao = Math.round((distanciaKm / 60) * 60); // média de 60 km/h
-                var html = `📍 Destino: <b>${nomeDestino}</b><br>`;
+                var html = cabecalho;
+                if (maisProximas.length) {
+                    maisProximas.forEach(function(m, i) {
+                        var emoji = m.cerca.tipo === "CLIENTE" ? "🟩" : "🟦";
+                        html += `${emoji} <b>${escapar(m.cerca.nome)}</b> — ${formatarDistanciaAmigavel(m.metros)} em linha reta${i === 0 ? " (mais próxima)" : ""}<br>`;
+                    });
+                } else {
+                    html += `<span style="color:#64748b;">Nenhuma cerca desenhada nesta cidade; usando o centro dela.</span><br>`;
+                }
                 html += porEstrada
-                    ? `🛣️ Distância por estrada: <b>${distanciaKm.toFixed(1)} km</b><br>`
+                    ? `🛣️ Distância por estrada${maisProximas.length ? " até a mais próxima" : ""}: <b>${distanciaKm.toFixed(1)} km</b><br>`
                     : `📏 Distância em linha reta (estimativa): <b>${distanciaKm.toFixed(1)} km</b><br>`;
                 html += `🚚 Previsão (média 60 km/h): <b>${formatarDuracaoAmigavel(minutosCaminhao)}</b>`;
                 if (porEstrada) {
                     html += `<br>🚗 Previsão do trajeto (veículo leve): ${formatarDuracaoAmigavel(Math.round(minutosRota))}`;
                 }
                 saida.innerHTML = html;
-                logDebug(`Destino "${cidade}": ${distanciaKm.toFixed(1)} km, previsão ${formatarDuracaoAmigavel(minutosCaminhao)} (média 60 km/h).`);
+                logDebug(`Destino "${consulta}": ${distanciaKm.toFixed(1)} km, previsão ${formatarDuracaoAmigavel(minutosCaminhao)} (média 60 km/h).`);
             } catch (erro) {
                 saida.innerHTML = `<span style="color:#b91c1c;">Não foi possível consultar o destino (sem internet ou serviço indisponível).</span>`;
-                logDebug("Falha ao buscar cidade de destino: " + erro.message, true);
+                logDebug("Falha ao buscar destino: " + erro.message, true);
             }
         }
 
@@ -2578,7 +2668,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.19_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.20_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
