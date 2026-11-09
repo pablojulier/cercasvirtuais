@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador Logístico de Cercas virtuais v24.20</title>
+    <title>Analisador Logístico de Cercas virtuais v24.21</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -190,10 +190,10 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.20
+            🗺️ Analisador Logístico de Cercas virtuais v24.21
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
-            Atualizado em 27/10/2026
+            Atualizado em 09/11/2026
         </span>
     </div>
      </div>
@@ -546,6 +546,7 @@
             <div class="layer-toggle-panel">
                 <button id="btn-toggle-layer" class="layer-btn" style="background:#10b981;" onclick="alternarCamadaMapa()">Mapa de Ruas 🗺️</button>
                 <button id="btn-toggle-polyline" class="layer-btn" onclick="alternarVisibilidadePolyline()">Ocultar Linhas 📐</button>
+                <button id="btn-toggle-drift" class="layer-btn" style="background:#ea580c;" onclick="alternarCorrecaoGpsDrift()" title="Detecta automaticamente o ruído do GPS parado e fixa o ponto real">🎯 Correção GPS: ON</button>
                 <button id="btn-toggle-trajeto" class="layer-btn" onclick="abrirModalTrajeto()">🛣️ Trajeto</button>
                 <button id="btn-toggle-timeline" class="layer-btn" style="background:#7c3aed;" onclick="abrirModalLinhaDoTempo()">🕐 Linha do Tempo</button>
             </div>
@@ -2001,6 +2002,117 @@ function aplicarFiltroPeriodo() {
             plotarPontosImediato();
         }
 
+
+        // ================= v24.21 - CORREÇÃO FINA DE GPS DRIFT (automática) =================
+        // Quando o rastreador está parado, o GPS "passeia" em volta do ponto real (ruído estático).
+        // Esta rotina detecta sozinha as sequências de pontos parados (vel baixa) que ficam dentro de um
+        // raio pequeno e substitui as coordenadas pelo ponto âncora (mediana do grupo), SEM mexer na
+        // data/hora/velocidade. As coordenadas originais ficam guardadas e podem ser restauradas.
+        var correcaoDriftAtiva = true;
+        var originaisDrift = new WeakMap();
+        var resumoDrift = { grupos: 0, pontos: 0 };
+        var DRIFT_RAIO_M = 30;        // raio máximo de oscilação em torno do ponto parado
+        var DRIFT_VEL_MAX = 5;        // km/h considerado "parado" para o ruído
+        var DRIFT_MIN_PONTOS = 3;     // mínimo de pontos para considerar uma parada
+        var DRIFT_MIN_MINUTOS = 3;    // duração mínima da parada
+
+        function driftDistM(la1, lo1, la2, lo2) {
+            var R = 6371000, r = Math.PI / 180;
+            var dLa = (la2 - la1) * r, dLo = (lo2 - lo1) * r;
+            var a = Math.sin(dLa / 2) * Math.sin(dLa / 2) + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin(dLo / 2) * Math.sin(dLo / 2);
+            return 2 * R * Math.asin(Math.min(1, Math.sqrt(a)));
+        }
+        function driftMediana(arr) {
+            var a = arr.slice().sort(function (x, y) { return x - y; });
+            var m = Math.floor(a.length / 2);
+            return a.length % 2 ? a[m] : (a[m - 1] + a[m]) / 2;
+        }
+
+        function restaurarCoordenadasOriginaisDrift() {
+            if (!dadosPlanilhaBrutos) return;
+            var cLat = colunasDetectadas.lat, cLon = colunasDetectadas.lon;
+            dadosPlanilhaBrutos.forEach(function (linha) {
+                var o = originaisDrift.get(linha);
+                if (o) { linha[cLat] = o.lat; linha[cLon] = o.lon; originaisDrift.delete(linha); }
+            });
+            resumoDrift = { grupos: 0, pontos: 0 };
+        }
+
+        function detectarEAplicarCorrecaoDrift() {
+            var cLat = colunasDetectadas.lat, cLon = colunasDetectadas.lon, cVel = colunasDetectadas.vel;
+            var lista = [];
+            dadosPlanilhaBrutos.forEach(function (linha) {
+                var lat = converterCoordenadaParaDecimal(linha[cLat]);
+                var lon = converterCoordenadaParaDecimal(linha[cLon]);
+                var date = mapDataValida(obterDataHoraBruta(linha));
+                var vel = parseFloat(linha[cVel]);
+                if (!isNaN(lat) && !isNaN(lon) && !isNaN(date.getTime())) {
+                    lista.push({ linha: linha, lat: lat, lon: lon, date: date, vel: isNaN(vel) ? 0 : vel });
+                }
+            });
+            lista.sort(function (a, b) { return a.date - b.date; });
+
+            var grupos = 0, pontos = 0;
+            var i = 0;
+            while (i < lista.length) {
+                if (lista[i].vel > DRIFT_VEL_MAX) { i++; continue; }
+                var membros = [lista[i]];
+                var cLa = lista[i].lat, cLo = lista[i].lon;
+                var j = i + 1;
+                while (j < lista.length && lista[j].vel <= DRIFT_VEL_MAX &&
+                       driftDistM(cLa, cLo, lista[j].lat, lista[j].lon) <= DRIFT_RAIO_M) {
+                    membros.push(lista[j]);
+                    cLa = driftMediana(membros.map(function (m) { return m.lat; }));
+                    cLo = driftMediana(membros.map(function (m) { return m.lon; }));
+                    j++;
+                }
+                var minutos = (membros[membros.length - 1].date - membros[0].date) / 60000;
+                if (membros.length >= DRIFT_MIN_PONTOS && minutos >= DRIFT_MIN_MINUTOS) {
+                    var mudou = 0;
+                    membros.forEach(function (m) {
+                        if (driftDistM(m.lat, m.lon, cLa, cLo) > 1) {
+                            if (!originaisDrift.has(m.linha)) originaisDrift.set(m.linha, { lat: m.linha[cLat], lon: m.linha[cLon] });
+                            m.linha[cLat] = cLa; m.linha[cLon] = cLo;
+                            mudou++;
+                        }
+                    });
+                    if (mudou > 0) { grupos++; pontos += mudou; }
+                    i = j;
+                } else {
+                    i++;
+                }
+            }
+            resumoDrift = { grupos: grupos, pontos: pontos };
+        }
+
+        function atualizarBotaoDrift() {
+            var btn = document.getElementById('btn-toggle-drift');
+            if (!btn) return;
+            if (correcaoDriftAtiva) {
+                btn.innerText = "🎯 Correção GPS: ON (" + resumoDrift.pontos + " pts / " + resumoDrift.grupos + " paradas)";
+                btn.classList.remove('toggle-off'); btn.style.background = "#ea580c";
+            } else {
+                btn.innerText = "🎯 Correção GPS: OFF";
+                btn.classList.add('toggle-off'); btn.style.background = "#64748b";
+            }
+        }
+
+        // Chamada no início de plotarPontosImediato: sempre parte das coordenadas originais (idempotente).
+        function prepararCorrecaoGpsDrift() {
+            if (!dadosPlanilhaBrutos) return;
+            restaurarCoordenadasOriginaisDrift();
+            if (correcaoDriftAtiva) {
+                detectarEAplicarCorrecaoDrift();
+                if (resumoDrift.pontos > 0) logDebug("🎯 Correção de GPS Drift: " + resumoDrift.pontos + " pontos ajustados em " + resumoDrift.grupos + " paradas.");
+            }
+            atualizarBotaoDrift();
+        }
+
+        function alternarCorrecaoGpsDrift() {
+            correcaoDriftAtiva = !correcaoDriftAtiva;
+            if (dadosPlanilhaBrutos) plotarPontosImediato(); else atualizarBotaoDrift();
+        }
+
         function calcularAnguloSeta(p1, p2) {
             var dLon = (p2.lng - p1.lng) * Math.PI / 180;
             var lat1 = p1.lat * Math.PI / 180;
@@ -2015,6 +2127,7 @@ function aplicarFiltroPeriodo() {
             camadaLinhasTrajeto.clearLayers();
             arrayPontosPlotados = [];
             limparResultadosLogica();
+            prepararCorrecaoGpsDrift();
             
             var cLat = colunasDetectadas.lat; var cLon = colunasDetectadas.lon;
             var cVel = colunasDetectadas.vel; var cTime = colunasDetectadas.time;
@@ -2668,7 +2781,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.20_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.21_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
