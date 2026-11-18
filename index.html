@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador Logístico de Cercas virtuais v24.21</title>
+    <title>Analisador Logístico de Cercas virtuais v24.24</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -190,10 +190,10 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.21
+            🗺️ Analisador Logístico de Cercas virtuais v24.24
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
-            Atualizado em 09/11/2026
+            Atualizado em 18/11/2026
         </span>
     </div>
      </div>
@@ -1198,6 +1198,7 @@
                     saida: c.visita.fimDate,
                     saidaTexto: c.visita.fim,
                     saidaPendente: !!c.visita.pendente,
+                    visita: c.visita,
                     duracaoMin: c.visita.duracaoMin,
                     descargas: c.descargas
                 };
@@ -1261,24 +1262,48 @@
                 var card = document.createElement('div');
                 card.style.cssText = "border:1px solid #e2e8f0; border-radius:8px; padding:10px; font-size:0.78rem; background:#fafafa;";
 
-                var pontosHtml = "";
-
-                pontosHtml += pontoTimelineHtml("🟢", "Chegada (Cliente)", ciclo.chegadaTexto, "var(--cor-cliente)");
+                var itensTl = [];
+                itensTl.push({ t: ciclo.chegada.getTime(), html: pontoTimelineHtml("🟢", "Chegada (Cliente)", ciclo.chegadaTexto, "var(--cor-cliente)") });
 
                 ciclo.descargas.forEach(function(d) {
-                    pontosHtml += pontoTimelineHtml("🔵", "Início Carga/Descarga", d.inicio, "var(--cor-descarga)");
+                    itensTl.push({ t: d.inicioDate.getTime(), html: pontoTimelineHtml("🔵", "Início Carga/Descarga", d.inicio, "var(--cor-descarga)") });
                     if (d.pendente) {
-                        pontosHtml += pontoTimelineHtmlTexto("🔵", "Fim Carga/Descarga", "Aguardando carga/descarga", "var(--accent-warning)");
+                        itensTl.push({ t: (d.fimDate instanceof Date) ? d.fimDate.getTime() : Infinity, html: pontoTimelineHtmlTexto("🔵", "Fim Carga/Descarga", "Aguardando carga/descarga", "var(--accent-warning)") });
                     } else {
-                        pontosHtml += pontoTimelineHtml("🔵", "Fim Carga/Descarga", d.fim, "var(--cor-descarga)");
+                        itensTl.push({ t: (d.fimDate instanceof Date) ? d.fimDate.getTime() : Infinity, html: pontoTimelineHtml("🔵", "Fim Carga/Descarga", d.fim, "var(--cor-descarga)") });
                     }
                 });
 
                 if (ciclo.saidaPendente) {
-                    pontosHtml += pontoTimelineHtmlTexto("🟢", "Saída (Cliente)", "Aguardando no cliente", "var(--accent-warning)");
+                    itensTl.push({ t: Infinity, html: pontoTimelineHtmlTexto("🟢", "Saída (Cliente)", "Aguardando no cliente", "var(--accent-warning)") });
                 } else {
-                    pontosHtml += pontoTimelineHtml("🟢", "Saída (Cliente)", ciclo.saidaTexto, "var(--cor-cliente)");
+                    itensTl.push({ t: (ciclo.saida instanceof Date) ? ciclo.saida.getTime() : Infinity, html: pontoTimelineHtml("🟢", "Saída (Cliente)", ciclo.saidaTexto, "var(--cor-cliente)") });
                 }
+
+                // Eventos do baú / fim de viagem (só existem em planilhas com coluna de Descrição), na ordem cronológica.
+                var evsTl = eventosBauDoCliente(ciclo.visita);
+                ciclo.descargas.forEach(function(d) {
+                    eventosBauDaDescarga(d).forEach(function(e) {
+                        if (!evsTl.some(function(x) { return x.date.getTime() === e.date.getTime() && x.tipo === e.tipo; })) evsTl.push(e);
+                    });
+                });
+                evsTl.sort(function(a, b) { return a.date - b.date; });
+                evsTl.forEach(function(e) {
+                    var r = rotuloEventoBau(e.tipo);
+                    var et = e.date.getTime();
+                    var pos = -1;
+                    for (var q = 1; q < itensTl.length; q++) { if (itensTl[q].t > et) { pos = q; break; } }
+                    if (pos === -1) pos = itensTl.length; // depois da Saída (ex.: Fim de Viagem dado após deixar o local)
+                    // Evento dentro do horário de uma carga/descarga (azul): recuado, para ficar visualmente dentro dela.
+                    var dentroAzul = !tipoEhViagem(e.tipo) && ciclo.descargas.some(function(d) {
+                        return d.inicioDate instanceof Date && et >= d.inicioDate.getTime() && et <= ((d.fimDate instanceof Date) ? d.fimDate.getTime() : Infinity);
+                    });
+                    var htmlEv = pontoTimelineHtml(r.emoji, r.rotulo, e.texto, r.cor);
+                    if (dentroAzul) htmlEv = '<div style="margin-left:18px; border-left:3px solid var(--cor-descarga); padding-left:6px;">' + htmlEv + '</div>';
+                    itensTl.splice(pos, 0, { t: et, html: htmlEv });
+                });
+
+                var pontosHtml = itensTl.map(function(it) { return it.html; }).join("");
 
                 card.innerHTML = `
                     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -2113,6 +2138,164 @@ function aplicarFiltroPeriodo() {
             if (dadosPlanilhaBrutos) plotarPontosImediato(); else atualizarBotaoDrift();
         }
 
+
+        // ================= v24.22 - EVENTOS DO BAÚ / FIM DE VIAGEM (planilhas com coluna de Descrição) =================
+        // Em planilhas como o RelatAnalitico, a coluna "Descrição" (G) traz mensagens do rastreador:
+        //  "Porta do Baú 1 Aberta" (repetida a cada ~5 min enquanto aberta), "Porta do Baú 1 Fechada" e "FIM DE VIAGEM".
+        // Aqui pegamos só a PRIMEIRA mensagem de cada abertura, o fechamento e o fim de viagem.
+        // Se a planilha não tiver essas mensagens, nada é retornado e nenhuma tela muda.
+        var cacheEventosBau = { ref: null, len: -1, eventos: [] };
+        var BAU_GAP_NOVA_ABERTURA_MIN = 20; // sem nenhum "Aberta" por mais de 20 min => nova abertura
+
+        function normalizarTextoEventoBau(t) {
+            return String(t === null || t === undefined ? "" : t).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+        }
+
+        function extrairEventosBauDaPlanilha() {
+            if (!dadosPlanilhaBrutos || !dadosPlanilhaBrutos.length) return [];
+            if (cacheEventosBau.ref === dadosPlanilhaBrutos && cacheEventosBau.len === dadosPlanilhaBrutos.length) return cacheEventosBau.eventos;
+
+            var reAberta = /porta do bau\s*\d*\s*aberta/, reFechada = /porta do bau\s*\d*\s*fechada/, reFim = /fim de viagem/, reIniCarr = /inicio\s*(de\s*)?viagem.*carregad/, reIni = /inicio\s*(de\s*)?viagem/;
+            var contagem = {};
+            dadosPlanilhaBrutos.forEach(function (linha) {
+                Object.keys(linha).forEach(function (k) {
+                    var v = linha[k];
+                    if (typeof v !== 'string') return;
+                    var n = normalizarTextoEventoBau(v);
+                    if (reAberta.test(n) || reFechada.test(n) || reFim.test(n) || reIni.test(n)) contagem[k] = (contagem[k] || 0) + 1;
+                });
+            });
+            var colDesc = null, melhor = 0;
+            Object.keys(contagem).forEach(function (k) { if (contagem[k] > melhor) { melhor = contagem[k]; colDesc = k; } });
+
+            var eventos = [];
+            if (colDesc) {
+                var brutos = [];
+                dadosPlanilhaBrutos.forEach(function (linha) {
+                    var n = normalizarTextoEventoBau(linha[colDesc]);
+                    var tipo = reFechada.test(n) ? 'fechamento' : (reAberta.test(n) ? 'abertura' : (reFim.test(n) ? 'fim_viagem' : (reIniCarr.test(n) ? 'inicio_viagem_carregado' : (reIni.test(n) ? 'inicio_viagem' : null))));
+                    if (!tipo) return;
+                    var date = mapDataValida(obterDataHoraBruta(linha));
+                    if (isNaN(date.getTime())) return;
+                    brutos.push({ tipo: tipo, date: date, lat: converterCoordenadaParaDecimal(linha[colunasDetectadas.lat]), lon: converterCoordenadaParaDecimal(linha[colunasDetectadas.lon]) });
+                });
+                brutos.sort(function (a, b) { return a.date - b.date; });
+
+                var aberto = false, ultimaAberta = null, ultimoPorTipo = {};
+                brutos.forEach(function (e) {
+                    if (e.tipo === 'abertura') {
+                        var gapMin = ultimaAberta ? (e.date - ultimaAberta) / 60000 : Infinity;
+                        if (!aberto || gapMin > BAU_GAP_NOVA_ABERTURA_MIN) {
+                            eventos.push({ tipo: 'abertura', date: e.date, texto: formatarDataBr(e.date), lat: e.lat, lon: e.lon });
+                        }
+                        aberto = true; ultimaAberta = e.date;
+                    } else if (e.tipo === 'fechamento') {
+                        eventos.push({ tipo: 'fechamento', date: e.date, texto: formatarDataBr(e.date), lat: e.lat, lon: e.lon });
+                        aberto = false; ultimaAberta = null;
+                    } else {
+                        var ult = ultimoPorTipo[e.tipo];
+                        if (!ult || (e.date - ult) / 60000 > 5) {
+                            eventos.push({ tipo: e.tipo, date: e.date, texto: formatarDataBr(e.date), lat: e.lat, lon: e.lon });
+                        }
+                        ultimoPorTipo[e.tipo] = e.date;
+                    }
+                });
+            }
+            cacheEventosBau = { ref: dadosPlanilhaBrutos, len: dadosPlanilhaBrutos.length, eventos: eventos };
+            return eventos;
+        }
+
+        function eventosBauNoIntervalo(inicioDate, fimDate) {
+            if (!(inicioDate instanceof Date)) return [];
+            var ini = inicioDate.getTime();
+            var fim = (fimDate instanceof Date) ? fimDate.getTime() : Infinity;
+            return extrairEventosBauDaPlanilha().filter(function (e) { var t = e.date.getTime(); return t >= ini && t <= fim; });
+        }
+
+
+        // Área AZUL (carga/descarga): só abertura/fechamento do baú que aconteceram dentro do horário da operação.
+        function eventosBauDaDescarga(d) {
+            return eventosBauNoIntervalo(d.inicioDate, d.fimDate).filter(function (e) { return e.tipo === 'abertura' || e.tipo === 'fechamento'; });
+        }
+
+        // Área VERDE (cliente): mensagens de viagem (início, início carregado e fim) dadas dentro do ciclo ou logo depois de
+        // sair da cerca (até 1 hora após a saída OU até 5 km da cerca), pois costumam ser dadas já fora do local.
+        // Abertura/fechamento do baú só aparecem no verde quando NÃO aconteceram dentro de uma carga/descarga (área azul).
+        var FIM_VIAGEM_TOLERANCIA_MIN = 60;
+        var FIM_VIAGEM_TOLERANCIA_M = 5000;
+        function tipoEhViagem(tipo) { return tipo === 'fim_viagem' || tipo === 'inicio_viagem' || tipo === 'inicio_viagem_carregado'; }
+        function eventoDentroDeDescarga(e, v) {
+            var t = e.date.getTime();
+            var cluster = v.localId ? obterClusterDeCercasProximas(v.localId) : [];
+            return (relatoriosCalculados.descarga || []).some(function (d) {
+                if (cluster.length && cluster.indexOf(d.localId) === -1) return false;
+                if (!(d.inicioDate instanceof Date)) return false;
+                return t >= d.inicioDate.getTime() && t <= ((d.fimDate instanceof Date) ? d.fimDate.getTime() : Infinity);
+            });
+        }
+        function eventosBauDoCliente(v) {
+            if (!v || !(v.inicioDate instanceof Date)) return [];
+            var dentro = eventosBauNoIntervalo(v.inicioDate, v.fimDate).filter(function (e) {
+                return tipoEhViagem(e.tipo) || !eventoDentroDeDescarga(e, v);
+            });
+            if (v.pendente || !(v.fimDate instanceof Date)) return dentro;
+
+            var todos = relatoriosCalculados.cliente || [];
+            var extras = extrairEventosBauDaPlanilha().filter(function (e) {
+                if (!tipoEhViagem(e.tipo)) return false;
+                var t = e.date.getTime();
+                if (t <= v.fimDate.getTime()) return false;
+                // se o evento cai dentro de outro ciclo de cliente, pertence a ele
+                var emOutro = todos.some(function (o) {
+                    return o !== v && o.inicioDate instanceof Date && t >= o.inicioDate.getTime() && t <= ((o.fimDate instanceof Date) ? o.fimDate.getTime() : Infinity);
+                });
+                if (emOutro) return false;
+                // pertence ao ciclo que terminou mais recentemente antes do evento
+                var melhor = null;
+                todos.forEach(function (o) {
+                    if (o.pendente || !(o.fimDate instanceof Date) || o.fimDate.getTime() >= t) return;
+                    if (!melhor || o.fimDate > melhor.fimDate) melhor = o;
+                });
+                if (melhor !== v) return false;
+                var minApos = (t - v.fimDate.getTime()) / 60000;
+                if (minApos <= FIM_VIAGEM_TOLERANCIA_MIN) return true;
+                if (v.verticesCerca && !isNaN(e.lat) && !isNaN(e.lon)) {
+                    return calcularDistanciaMinimaPerimetro(e.lat, e.lon, v.verticesCerca) <= FIM_VIAGEM_TOLERANCIA_M;
+                }
+                return false;
+            });
+            return dentro.concat(extras);
+        }
+
+        // O popup da cerca verde é montado antes de todas as cargas/descargas (azuis) existirem; por isso os balões do
+        // baú entram por marcador e só são resolvidos quando o popup é aberto.
+        function resolverBauNoPopup(html) {
+            return html.replace(/@@BAUCLI:(\d+)@@/g, function (m, i) {
+                var v = (relatoriosCalculados.cliente || [])[parseInt(i, 10)];
+                return v ? htmlBalaoEventosBau(v.inicioDate, v.fimDate, eventosBauDoCliente(v)) : "";
+            });
+        }
+
+        function rotuloEventoBau(tipo) {
+            if (tipo === 'abertura') return { emoji: "🚪", rotulo: "Abertura do Baú", curto: "Baú aberto", cor: "#b45309" };
+            if (tipo === 'fechamento') return { emoji: "🔒", rotulo: "Baú Fechado (fim carga/descarga)", curto: "Baú fechado", cor: "#15803d" };
+            if (tipo === 'inicio_viagem') return { emoji: "🚚", rotulo: "Início de Viagem", curto: "Início de viagem", cor: "#0369a1" };
+            if (tipo === 'inicio_viagem_carregado') return { emoji: "🚛", rotulo: "Início de Viagem (carregado)", curto: "Início de viagem carregado", cor: "#0369a1" };
+            return { emoji: "🏁", rotulo: "Fim de Viagem", curto: "Fim de viagem", cor: "#7c3aed" };
+        }
+
+        // "Balãozinhos" com os eventos do baú que aconteceram dentro do horário de uma operação (cerca verde/azul).
+        function htmlBalaoEventosBau(inicioDate, fimDate, evsProntos) {
+            var evs = evsProntos || eventosBauNoIntervalo(inicioDate, fimDate);
+            if (!evs.length) return "";
+            var html = '<div style="margin-top:4px;">';
+            evs.forEach(function (e) {
+                var r = rotuloEventoBau(e.tipo);
+                html += '<a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora(\'' + e.texto + '\'); return false;" style="display:inline-block; background:#fffbeb; border:1px solid #fbbf24; color:' + r.cor + '; border-radius:12px; padding:1px 8px; font-size:0.68rem; font-weight:bold; margin:2px 4px 0 0; text-decoration:none;">' + r.emoji + ' ' + r.curto + ' ' + e.texto + '</a>';
+            });
+            return html + '</div>';
+        }
+
         function calcularAnguloSeta(p1, p2) {
             var dLon = (p2.lng - p1.lng) * Math.PI / 180;
             var lat1 = p1.lat * Math.PI / 180;
@@ -2413,11 +2596,12 @@ function aplicarFiltroPeriodo() {
                             <b>Operação #${idx + 1} (${formatarDuracaoAmigavel(v.duracaoMin)}${v.pendente ? ' até agora' : ''}):</b><br>
                             📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${v.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${v.inicio}</a>${botaoCopiarEntradaCliente}<br>
                             📤 Saída: ${textoSaida}${botaoCopiarSaidaCliente}
+                            @@BAUCLI:${relatoriosCalculados.cliente.indexOf(v)}@@
                         </div>
                     `;
                 });
                 htmlPopupClientes += `</div>`;
-                local.layer.bindPopup(htmlPopupClientes);
+                local.layer.bindPopup(function () { return resolverBauNoPopup(htmlPopupClientes); });
             } else {
                 local.layer.bindPopup(`<b>🟩 ${local.nome}</b><br><small style="color:#64748b;">Nenhuma parada com velocidade zero detectada nesta área.</small>`);
             }
@@ -2503,6 +2687,7 @@ function aplicarFiltroPeriodo() {
                             <b>Operação #${idx + 1} (${formatarDuracaoAmigavel(d.duracao)}${d.pendente ? ' até agora' : ''}):</b><br>
                             📥 Entrada Parado: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${d.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${d.inicio}</a>${botaoCopiarEntradaDescarga}<br>
                             📤 Saída Cerca: ${textoSaidaDescarga}${botaoCopiarSaidaDescarga}
+                            ${htmlBalaoEventosBau(d.inicioDate, d.fimDate, eventosBauDaDescarga(d))}
                         </div>
                     `;
                 });
@@ -2707,7 +2892,7 @@ function aplicarFiltroPeriodo() {
             item.innerHTML = `<div><b>🟦 ${ev.localNome} (#${idx+1})</b></div>
                               <div style="font-size:0.75rem; color:#475569; margin-top:3px;">Permanência: <b>${ev.duracao} min${ev.pendente ? ' até agora' : ''}</b><br>
                               📥 Entrada: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${ev.inicio}</a><br>
-                              📤 Saída: ${htmlSaidaDescarga}</div>`;
+                              📤 Saída: ${htmlSaidaDescarga}${htmlBalaoEventosBau(ev.inicioDate, ev.fimDate, eventosBauDaDescarga(ev))}</div>`;
         } 
         else if (abaAtivaResultados === 'cliente') {
             item.className = "log-item cliente";
@@ -2720,7 +2905,7 @@ function aplicarFiltroPeriodo() {
             item.innerHTML = `<div><b>🟩 ${ev.localNome} (#${idx+1})</b></div>
                               <div style="font-size:0.75rem; color:#475569; margin-top:3px;">
                               ⏱️ Chegada: <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${ev.inicio}'); return false;" style="color:#2563eb; text-decoration:underline; font-weight:bold;">${ev.inicio}</a><br>
-                              ⏱️ Saída: ${htmlSaida}</div>`;
+                              ⏱️ Saída: ${htmlSaida}${htmlBalaoEventosBau(ev.inicioDate, ev.fimDate, eventosBauDoCliente(ev))}</div>`;
         }
         else if (abaAtivaResultados === 'proibida') {
             item.className = "log-item proibida";
@@ -2781,7 +2966,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.21_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.24_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
