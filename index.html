@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador Logístico de Cercas virtuais v24.24</title>
+    <title>Analisador Logístico de Cercas virtuais v24.26</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -190,10 +190,10 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.24
+            🗺️ Analisador Logístico de Cercas virtuais v24.26
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
-            Atualizado em 18/11/2026
+            Atualizado em 19/11/2026
         </span>
     </div>
      </div>
@@ -1288,6 +1288,10 @@
                     });
                 });
                 evsTl.sort(function(a, b) { return a.date - b.date; });
+                // Com eventos do baú os rótulos ficam mais longos: alarga a coluna de rótulos de todas as linhas do ciclo
+                // para que as datas/horas fiquem alinhadas na direita.
+                var largRotuloTl = evsTl.length ? 290 : 150;
+                if (evsTl.length) itensTl.forEach(function(it) { it.html = it.html.replace('min-width:150px', 'min-width:' + largRotuloTl + 'px'); });
                 evsTl.forEach(function(e) {
                     var r = rotuloEventoBau(e.tipo);
                     var et = e.date.getTime();
@@ -1298,7 +1302,7 @@
                     var dentroAzul = !tipoEhViagem(e.tipo) && ciclo.descargas.some(function(d) {
                         return d.inicioDate instanceof Date && et >= d.inicioDate.getTime() && et <= ((d.fimDate instanceof Date) ? d.fimDate.getTime() : Infinity);
                     });
-                    var htmlEv = pontoTimelineHtml(r.emoji, r.rotulo, e.texto, r.cor);
+                    var htmlEv = pontoTimelineHtml(r.emoji, r.rotulo, e.texto, r.cor, dentroAzul ? largRotuloTl - 27 : largRotuloTl);
                     if (dentroAzul) htmlEv = '<div style="margin-left:18px; border-left:3px solid var(--cor-descarga); padding-left:6px;">' + htmlEv + '</div>';
                     itensTl.splice(pos, 0, { t: et, html: htmlEv });
                 });
@@ -1374,10 +1378,10 @@
         }
 
         // Gera uma linha clicável (foca o mapa no ponto daquela data/hora) para a Linha do Tempo
-        function pontoTimelineHtml(emoji, rotulo, dataTexto, cor) {
+        function pontoTimelineHtml(emoji, rotulo, dataTexto, cor, largRotulo) {
             return `<div style="display:flex; align-items:center; gap:6px;">
                 <span>${emoji}</span>
-                <span style="color:#64748b; min-width:150px;">${rotulo}:</span>
+                <span style="color:#64748b; min-width:${largRotulo || 150}px; white-space:nowrap;">${rotulo}:</span>
                 <a href="#" onclick="event.stopPropagation(); focarPontoPorDataEHora('${dataTexto}'); return false;" style="color:${cor}; text-decoration:underline; font-weight:bold;">${dataTexto}</a>
                 <button onclick="event.stopPropagation(); copiarParaAreaTransferencia('${dataTexto}', this);" style="width:auto; padding:1px 5px; font-size:0.62rem; margin-left:2px; background:#64748b;" title="Copiar data/hora">📋</button>
             </div>`;
@@ -2201,7 +2205,62 @@ function aplicarFiltroPeriodo() {
                     }
                 });
             }
+            // Planilhas sem mensagens de texto (ex.: Sascar): usa o sensor SBT (Sensor Baú Traseiro)
+            if (!eventos.length) eventos = extrairEventosBauPorSensorSBT();
             cacheEventosBau = { ref: dadosPlanilhaBrutos, len: dadosPlanilhaBrutos.length, eventos: eventos };
+            return eventos;
+        }
+
+
+        // Sascar: a coluna de sensores ("S. Ativados", col. P) traz "SBT" (Sensor Baú Traseiro) enquanto o baú está aberto,
+        // às vezes junto de outros sensores ("SBT / SPM"). Primeira atuação do SBT = baú aberto (início de carga/descarga);
+        // última atuação = baú fechado (fim de carga/descarga). Só vale com o veículo parado (velocidade 0).
+        var BAU_SBT_JUNTAR_SEG = 60; // linha sem SBT por menos de 60 s entre duas atuações (mesmo instante) não fecha o baú
+        function extrairEventosBauPorSensorSBT() {
+            var reSBT = /(^|[\s\/,;|])sbt($|[\s\/,;|])/;
+            var contagem = {};
+            dadosPlanilhaBrutos.forEach(function (linha) {
+                Object.keys(linha).forEach(function (k) {
+                    var v = linha[k];
+                    if (typeof v === 'string' && reSBT.test(v.toLowerCase())) contagem[k] = (contagem[k] || 0) + 1;
+                });
+            });
+            var colSensor = null, melhor = 0;
+            Object.keys(contagem).forEach(function (k) { if (contagem[k] > melhor) { melhor = contagem[k]; colSensor = k; } });
+            if (!colSensor) return [];
+
+            var cVel = colunasDetectadas.vel;
+            var linhas = [];
+            dadosPlanilhaBrutos.forEach(function (linha) {
+                var date = mapDataValida(obterDataHoraBruta(linha));
+                if (isNaN(date.getTime())) return;
+                var sensor = linha[colSensor];
+                var temSBT = typeof sensor === 'string' && reSBT.test(sensor.toLowerCase());
+                var vel = parseFloat(linha[cVel]);
+                linhas.push({ date: date, sbt: temSBT, parado: !isNaN(vel) && vel === 0, lat: converterCoordenadaParaDecimal(linha[colunasDetectadas.lat]), lon: converterCoordenadaParaDecimal(linha[colunasDetectadas.lon]) });
+            });
+            linhas.sort(function (a, b) { return a.date - b.date; });
+
+            var eventos = [], atual = null;
+            function fechar() {
+                if (!atual) return;
+                eventos.push({ tipo: 'abertura', date: atual.ini.date, texto: formatarDataBr(atual.ini.date), lat: atual.ini.lat, lon: atual.ini.lon });
+                eventos.push({ tipo: 'fechamento', date: atual.fim.date, texto: formatarDataBr(atual.fim.date), lat: atual.fim.lat, lon: atual.fim.lon });
+                atual = null;
+            }
+            linhas.forEach(function (l) {
+                if (l.sbt && !l.parado) return; // SBT com o veículo em movimento não é abertura/fechamento: ignora a linha
+                if (l.sbt) {
+                    if (atual && (l.date - atual.fim.date) / 1000 > BAU_SBT_JUNTAR_SEG && atual.pendenteSemSBT) fechar();
+                    if (!atual) atual = { ini: l, fim: l, pendenteSemSBT: false };
+                    else { atual.fim = l; atual.pendenteSemSBT = false; }
+                } else if (atual) {
+                    // linha sem SBT: encerra a sequência, a menos que ela seja do mesmo instante da última atuação
+                    if ((l.date - atual.fim.date) / 1000 > BAU_SBT_JUNTAR_SEG) fechar();
+                    else atual.pendenteSemSBT = true;
+                }
+            });
+            fechar();
             return eventos;
         }
 
@@ -2277,7 +2336,7 @@ function aplicarFiltroPeriodo() {
         }
 
         function rotuloEventoBau(tipo) {
-            if (tipo === 'abertura') return { emoji: "🚪", rotulo: "Abertura do Baú", curto: "Baú aberto", cor: "#b45309" };
+            if (tipo === 'abertura') return { emoji: "🚪", rotulo: "Abertura do Baú (início carga/descarga)", curto: "Baú aberto", cor: "#b45309" };
             if (tipo === 'fechamento') return { emoji: "🔒", rotulo: "Baú Fechado (fim carga/descarga)", curto: "Baú fechado", cor: "#15803d" };
             if (tipo === 'inicio_viagem') return { emoji: "🚚", rotulo: "Início de Viagem", curto: "Início de viagem", cor: "#0369a1" };
             if (tipo === 'inicio_viagem_carregado') return { emoji: "🚛", rotulo: "Início de Viagem (carregado)", curto: "Início de viagem carregado", cor: "#0369a1" };
@@ -2966,7 +3025,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.24_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.26_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
