@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisador Logístico de Cercas virtuais v24.26</title>
+    <title>Analisador Logístico de Cercas virtuais v24.27</title>
     
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
@@ -190,10 +190,10 @@
     
         <div style="flex: 1; min-width: 300px;">
         <h2 style="margin: 0; font-size: 1.5rem; font-weight: bold; letter-spacing: 0.5px;">
-            🗺️ Analisador Logístico de Cercas virtuais v24.26
+            🗺️ Analisador Logístico de Cercas virtuais v24.27
         </h2>
         <span style="font-size: 0.75rem; color: #a0aec0; display: block; margin-top: 2px;">
-            Atualizado em 19/11/2026
+            Atualizado em 21/11/2026
         </span>
     </div>
      </div>
@@ -2006,7 +2006,8 @@ function aplicarFiltroPeriodo() {
                 if(low.includes('lat')) colunasDetectadas.lat = h;
                 if(low.includes('lon') || low.includes('long')) colunasDetectadas.lon = h;
                 if(colunaComecaCom(low, 'vel') || colunaComecaCom(low, 'speed') || colunaComecaCom(low, 'km')) colunasDetectadas.vel = h;
-                if(low.includes('dat') || low.includes('hor') || low.includes('tim')) colunasDetectadas.time = h;
+                var ehDataSistemaSecundaria = low.includes('sistema') && headers.some(function(x) { var l = String(x).toLowerCase().trim(); return l.includes('dat') && !l.includes('sistema') && !l.includes('hor') && !l.includes('tim'); });
+                if((low.includes('dat') || low.includes('hor') || low.includes('tim')) && !ehDataSistemaSecundaria) colunasDetectadas.time = h;
                 if(low.includes('porta') || low.includes('bau') || low.includes('sensor') || low.includes('status')) colunasDetectadas.porta = h;
 
                 // Detecta planilhas que separam Data e Hora em colunas distintas (ex: RelatAnalitico)
@@ -2160,13 +2161,15 @@ function aplicarFiltroPeriodo() {
             if (cacheEventosBau.ref === dadosPlanilhaBrutos && cacheEventosBau.len === dadosPlanilhaBrutos.length) return cacheEventosBau.eventos;
 
             var reAberta = /porta do bau\s*\d*\s*aberta/, reFechada = /porta do bau\s*\d*\s*fechada/, reFim = /fim de viagem/, reIniCarr = /inicio\s*(de\s*)?viagem.*carregad/, reIni = /inicio\s*(de\s*)?viagem/;
+            // Omnilink (coluna "Teleevento"): eventos pontuais "Abertura de Baú" / "Fechamento de Baú"
+            var reAbertBauOmni = /(^|[\s:\-])abertura de bau\s*$/, reFechBauOmni = /(^|[\s:\-])fechamento de bau\s*$/;
             var contagem = {};
             dadosPlanilhaBrutos.forEach(function (linha) {
                 Object.keys(linha).forEach(function (k) {
                     var v = linha[k];
                     if (typeof v !== 'string') return;
                     var n = normalizarTextoEventoBau(v);
-                    if (reAberta.test(n) || reFechada.test(n) || reFim.test(n) || reIni.test(n)) contagem[k] = (contagem[k] || 0) + 1;
+                    if (reAberta.test(n) || reFechada.test(n) || reFim.test(n) || reIni.test(n) || reAbertBauOmni.test(n) || reFechBauOmni.test(n)) contagem[k] = (contagem[k] || 0) + 1;
                 });
             });
             var colDesc = null, melhor = 0;
@@ -2177,11 +2180,17 @@ function aplicarFiltroPeriodo() {
                 var brutos = [];
                 dadosPlanilhaBrutos.forEach(function (linha) {
                     var n = normalizarTextoEventoBau(linha[colDesc]);
-                    var tipo = reFechada.test(n) ? 'fechamento' : (reAberta.test(n) ? 'abertura' : (reFim.test(n) ? 'fim_viagem' : (reIniCarr.test(n) ? 'inicio_viagem_carregado' : (reIni.test(n) ? 'inicio_viagem' : null))));
+                    var omni = reAbertBauOmni.test(n) || reFechBauOmni.test(n);
+                    var tipo = (reFechada.test(n) || reFechBauOmni.test(n)) ? 'fechamento' : ((reAberta.test(n) || reAbertBauOmni.test(n)) ? 'abertura' : (reFim.test(n) ? 'fim_viagem' : (reIniCarr.test(n) ? 'inicio_viagem_carregado' : (reIni.test(n) ? 'inicio_viagem' : null))));
                     if (!tipo) return;
                     var date = mapDataValida(obterDataHoraBruta(linha));
                     if (isNaN(date.getTime())) return;
-                    brutos.push({ tipo: tipo, date: date, lat: converterCoordenadaParaDecimal(linha[colunasDetectadas.lat]), lon: converterCoordenadaParaDecimal(linha[colunasDetectadas.lon]) });
+                    // Omnilink: o baú só abre/fecha com o veículo parado (tolera até 5 km/h de ruído de GPS)
+                    if (omni) {
+                        var velOmni = parseFloat(String(linha[colunasDetectadas.vel]).replace(',', '.'));
+                        if (!isNaN(velOmni) && velOmni > 5) return;
+                    }
+                    brutos.push({ omni: omni, tipo: tipo, date: date, lat: converterCoordenadaParaDecimal(linha[colunasDetectadas.lat]), lon: converterCoordenadaParaDecimal(linha[colunasDetectadas.lon]) });
                 });
                 brutos.sort(function (a, b) { return a.date - b.date; });
 
@@ -2194,7 +2203,11 @@ function aplicarFiltroPeriodo() {
                         }
                         aberto = true; ultimaAberta = e.date;
                     } else if (e.tipo === 'fechamento') {
-                        eventos.push({ tipo: 'fechamento', date: e.date, texto: formatarDataBr(e.date), lat: e.lat, lon: e.lon });
+                        var evFech = { tipo: 'fechamento', date: e.date, texto: formatarDataBr(e.date), lat: e.lat, lon: e.lon };
+                        var antFech = eventos[eventos.length - 1];
+                        // Omnilink: dois "Fechamento de Baú" seguidos (até 10 min) = o último é o fim real
+                        if (e.omni && antFech && antFech.tipo === 'fechamento' && (e.date - antFech.date) / 60000 <= 10) eventos[eventos.length - 1] = evFech;
+                        else eventos.push(evFech);
                         aberto = false; ultimaAberta = null;
                     } else {
                         var ult = ultimoPorTipo[e.tipo];
@@ -3025,7 +3038,7 @@ function aplicarFiltroPeriodo() {
     var blob = new Blob([JSON.stringify(arrayExportacao, null, 2)], {type: "application/json"});
     var a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `cercas_logistica_v24.26_${totalRegistros}_registros.json`;
+    a.download = `cercas_logistica_v24.27_${totalRegistros}_registros.json`;
     a.click();
 
     // Notificacao com a contagem exata
